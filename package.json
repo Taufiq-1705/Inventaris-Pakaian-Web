@@ -1,0 +1,28 @@
+{
+  "name": "inventaripakaianv2",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "dev:frontend": "npm run dev --workspace=apps/frontend",
+    "dev:backend": "npm run dev --workspace=apps/backend",
+    "db:push": "npm run db:push --workspace=apps/backend",
+    "db:seed": "npm run db:seed --workspace=apps/backend",
+    "db:studio": "npm run db:studio --workspace=apps/backend",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "workspaces": [
+    "apps/*"
+  ],
+  "dependencies": {
+    "@tailwindcss/postcss": "^4.3.1",
+    "drizzle-orm": "^0.45.2",
+    "postcss": "^8.5.15",
+    "postgres": "^3.4.9",
+    "tailwindcss": "^4.3.1"
+  }
+}
