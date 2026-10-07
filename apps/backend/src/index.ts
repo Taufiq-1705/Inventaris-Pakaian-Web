@@ -1,6 +1,8 @@
-import "dotenv/config";
+import { env } from "./lib/env.js"; // must be first: validates .env before anything else
 import express from "express";
 import cors from "cors";
+import helmet from "helmet";
+import { authRateLimiter } from "./middleware/rateLimit.js";
 
 // Route imports
 import authRoutes from "./routes/auth.js";
@@ -13,20 +15,25 @@ import categoryRoutes from "./routes/categories.js";
 import outgoingRoutes from "./routes/outgoing.js";
 
 const app = express();
-const PORT = process.env.PORT || 3001;
+const PORT = env.PORT;
 
-// ─── Middleware ───────────────────────────────────────────
+// --- Middleware ---------------------------------------------------------
+app.disable("x-powered-by");
+app.use(helmet());
 app.use(
   cors({
-    origin: process.env.FRONTEND_URL || "http://localhost:5173",
+    origin: env.FRONTEND_URL,
     credentials: true, // Required for Better Auth cookies
   })
 );
-app.use(express.json());
+app.use(express.json({ limit: "1mb" }));
 
-// ─── Routes ──────────────────────────────────────────────
+// --- Routes -------------------------------------------------------------
 
-// Better Auth — handles /api/auth/* (login, register, session, etc.)
+// Brute-force protection on credential endpoints
+app.use(["/api/auth/sign-in", "/api/auth/sign-up"], authRateLimiter);
+
+// Better Auth - handles /api/auth/* (login, register, session, etc.)
 app.use("/api/auth", authRoutes);
 
 // Application routes
@@ -38,7 +45,7 @@ app.use("/api/profile", profileRoutes);
 app.use("/api/categories", categoryRoutes);
 app.use("/api/outgoing", outgoingRoutes);
 
-// ─── Health Check ────────────────────────────────────────
+// --- Health Check -------------------------------------------------------
 app.get("/api/health", (_req, res) => {
   res.json({
     status: "ok",
@@ -47,15 +54,16 @@ app.get("/api/health", (_req, res) => {
   });
 });
 
-// ─── Start Server ────────────────────────────────────────
+// --- Start Server -------------------------------------------------------
 app.listen(PORT, () => {
-  console.log(`\n🚀 Backend server running at http://localhost:${PORT}`);
-  console.log(`📋 API routes:`);
+  console.log(`\nBackend server running at http://localhost:${PORT}`);
+  console.log(`API routes:`);
   console.log(`   Auth:       http://localhost:${PORT}/api/auth/*`);
   console.log(`   Dashboard:  http://localhost:${PORT}/api/dashboard/*`);
   console.log(`   Items:      http://localhost:${PORT}/api/items`);
   console.log(`   Warehouses: http://localhost:${PORT}/api/warehouses`);
   console.log(`   Transfers:  http://localhost:${PORT}/api/transfers`);
+  console.log(`   Outgoing:   http://localhost:${PORT}/api/outgoing`);
   console.log(`   Profile:    http://localhost:${PORT}/api/profile`);
   console.log(`   Categories: http://localhost:${PORT}/api/categories`);
   console.log(`   Health:     http://localhost:${PORT}/api/health`);

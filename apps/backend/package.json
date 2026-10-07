@@ -13,19 +13,21 @@
     "db:seed": "tsx src/db/seed.ts"
   },
   "dependencies": {
-    "express": "^5.1.0",
     "better-auth": "^1.2.10",
-    "drizzle-orm": "^0.44.2",
-    "postgres": "^3.4.7",
     "cors": "^2.8.5",
-    "dotenv": "^16.5.0"
+    "dotenv": "^16.5.0",
+    "drizzle-orm": "^0.44.2",
+    "express": "^5.1.0",
+    "express-rate-limit": "^8.7.1",
+    "helmet": "^8.3.0",
+    "postgres": "^3.4.7"
   },
   "devDependencies": {
-    "@types/express": "^5.0.2",
     "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.2",
     "@types/node": "^22.15.0",
-    "typescript": "^5.8.3",
+    "drizzle-kit": "^0.31.1",
     "tsx": "^4.19.4",
-    "drizzle-kit": "^0.31.1"
+    "typescript": "^5.8.3"
   }
 }
