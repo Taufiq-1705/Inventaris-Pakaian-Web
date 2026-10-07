@@ -193,6 +193,25 @@ Untuk membaca dokumentasi arsitektur mendalam, detail skema database, alur auten
 
 ---
 
+## ⚠️ Known Limitations & Pending Features (Daftar Hal yang Masih Perlu Dikembangkan)
+
+Berdasarkan audit teknis arsitektur sistem terkini, berikut adalah beberapa area dan fitur yang masih dalam tahap pengembangan lanjutan (*pending*):
+
+1. **Manajemen Sesi Perangkat Aktif (`PengaturanPage`)**:
+   - Tampilan daftar perangkat login ("MacBook Air M1", "iPhone 13", dll.) saat ini masih berupa data mock statis di antarmuka. Integrasi dengan tabel `session` di database Better Auth dan fitur revokasi sesi perangkat individual sedang disiapkan.
+2. **Penyimpanan Berkas Foto Profil (`ProfilPage`)**:
+   - Tombol "Ubah Foto" belum terhubung dengan penyimpanan berkas fisik (*cloud object storage* seperti S3/GCS atau upload lokal). Avatar saat ini masih menggunakan URL placeholder statis.
+3. **Persistensi Preferensi Notifikasi**:
+   - Pengaturan *toggle* notifikasi Push dan Email pada halaman Pengaturan baru beroperasi di *state* lokal React dan belum dipersistensikan ke tabel profil basis data.
+4. **Modul Ekspor & Pelaporan**:
+   - Metrik statistik `totalReports` masih bernilai `0` (placeholder) karena fitur *export* laporan inventaris berkala (format PDF/Excel) masih dalam antrean pengembangan (*roadmap*).
+5. **Strategi Penghapusan Data Inventaris (*Soft Delete*)**:
+   - Penghapusan barang yang pernah tercatat dalam transaksi keluar (`outgoing_transaction_item`) memerlukan penerapan *soft-delete* (`is_deleted`) untuk menghindari pelanggaran batasan relasi *foreign key* PostgreSQL.
+6. **Variabel Lingkungan Frontend Client Dinamis**:
+   - Klien frontend saat ini mengarah ke `http://localhost:3001` secara default dan disarankan menggunakan pengikatan `import.meta.env.VITE_API_URL` sebelum *deployment* ke multi-environment.
+
+---
+
 ## 👥 Lisensi & Kontributor
 Dikembangkan untuk kebutuhan manajemen inventaris konveksi dan garmen modern.
 Lisensi: **ISC**.

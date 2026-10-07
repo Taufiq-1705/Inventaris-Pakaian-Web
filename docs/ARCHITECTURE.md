@@ -373,3 +373,29 @@ Seluruh endpoint bisnis berada di bawah prefiks `/api` dan mewajibkan sesi login
 | **Pencegahan Stok Negatif** | Mutasi transfer atau transaksi keluar menolak operasi jika stok fisik tersedia kurang dari kuantitas yang diminta. |
 | **Indikator Level Stok Otomatis** | Nilai kolom `status` pada tabel `item` dihitung secara dinamis saat *insert/update*: `KRITIS` (≤ 20 pcs), `MENIPIS` (21–50 pcs), dan `AMAN` (> 50 pcs). |
 | **Isolasi Akun Multi-Pengguna** | Setiap kueri database pada modul barang, transaksi keluar, mutasi, dan dashboard memfilter dengan `createdById = req.user.id`, memastikan keamanan dan privasi data antar-pengguna. |
+
+---
+
+## 6. Kesenjangan Sistem & Rencana Peningkatan (System Gaps & Roadmap)
+
+Sebagai bagian dari continuous improvement arsitektur sistem, audit berkala memetakan kesenjangan teknis yang menjadi prioritas pengembangan tahap berikutnya:
+
+### 6.1 Manajemen Sesi Perangkat (Active Session Management)
+- **Status Saat Ini**: Antarmuka `PengaturanPage` menampilkan kartu daftar perangkat login menggunakan data tiruan (*mock data*).
+- **Rencana Teknis**: Mengekspos endpoint `GET /api/auth/sessions` yang membaca data tabel `session` (didukung oleh Better Auth `storeSessionInDatabase: true`) dan endpoint `DELETE /api/auth/sessions/:id` untuk fitur *force logout* perangkat spesifik dari jarak jauh.
+
+### 6.2 Manajemen Berkas & Media (File Storage Strategy)
+- **Status Saat Ini**: Foto profil akun menggunakan tautan gambar statis dan belum memiliki pipa unggah berkas (*file upload pipeline*).
+- **Rencana Teknis**: Mengintegrasikan library multipart (misal: Multer) dan penyimpanan berkas terdistribusi (*Object Storage* kompatibel S3 atau Supabase Storage) dengan validasi tipe MIME dan kompresi gambar otomatis.
+
+### 6.3 Integritas Relasional & Kebijakan Soft-Delete
+- **Status Saat Ini**: Operasi `DELETE /api/items/:id` melakukan *hard-delete* yang dapat berbenturan dengan catatan historis `outgoing_transaction_item` jika barang terkait pernah dikeluarkan.
+- **Rencana Teknis**: Mengadopsi kolom `deleted_at: timestamp` (*soft-delete pattern*) pada tabel `item` sehingga rekaman audit, nota transaksi keluar, dan laporan akuntansi tetap utuh tanpa merusak integritas *foreign key*.
+
+### 6.4 Agregasi Metrik Monitoring Berbasis Database
+- **Status Saat Ini**: Kartu ringkasan status stok (`AMAN`, `MENIPIS`, `KRITIS`) di halaman Monitoring Barang dihitung dari data 10 item pada halaman aktif (*current page items*).
+- **Rencana Teknis**: Menyediakan endpoint terdedikasi `GET /api/items/summary-stats` yang melakukan kueri agregasi SQL langsung ke basis data (`COUNT(*) FILTER (WHERE status = 'AMAN')`) untuk menghitung status seluruh SKU inventaris.
+
+### 6.5 Fleksibilitas Konfigurasi Klien (Dynamic Base URL)
+- **Status Saat Ini**: Modul klien API frontend mengacu ke port lokal `http://localhost:3001`.
+- **Rencana Teknis**: Mengikat seluruh pemanggilan client fetch ke `import.meta.env.VITE_API_URL || 'http://localhost:3001'` guna mempermudah deployment ke lingkungan *staging* dan *production*.
