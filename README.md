@@ -34,7 +34,8 @@ InventariPakaianV2/
 │       └── vite.config.ts   # Konfigurasi bundler Vite
 │
 ├── docs/                    # Dokumentasi teknis mendalam (Arsitektur, API, DB)
-│   └── ARCHITECTURE.md
+│   ├── ARCHITECTURE.md
+│   └── SECURITY.md          # Kebijakan kredensial & checklist keamanan
 │
 ├── .env.example             # Template konfigurasi variabel lingkungan backend
 ├── package.json             # Root workspace konfigurasi NPM
@@ -79,8 +80,8 @@ Buka terminal dan jalankan perintah berikut:
 
 ```bash
 # Clone repositori
-git clone https://github.com/username/InventariPakaianV2.git
-cd InventariPakaianV2
+git clone https://github.com/Taufiq-1705/Inventaris-Pakaian-Web.git
+cd Inventaris-Pakaian-Web
 
 # Instal seluruh dependensi root, backend, dan frontend sekaligus
 npm install
@@ -90,11 +91,16 @@ npm install
 
 ### 3. Konfigurasi Variabel Lingkungan (.env)
 
-Buat file `.env` di dalam folder `apps/backend/`:
+Salin template untuk backend **dan** frontend:
 
 ```bash
-# Salin template env ke apps/backend/.env
-cp .env.example apps/backend/.env
+# macOS / Linux / Git Bash
+cp apps/backend/.env.example apps/backend/.env
+cp apps/frontend/.env.example apps/frontend/.env
+
+# Windows PowerShell
+Copy-Item apps/backend/.env.example apps/backend/.env
+Copy-Item apps/frontend/.env.example apps/frontend/.env
 ```
 
 Buka `apps/backend/.env` dan sesuaikan nilainya:
@@ -102,8 +108,8 @@ Buka `apps/backend/.env` dan sesuaikan nilainya:
 # URL Koneksi PostgreSQL (Sesuaikan user, password, host, port, dan dbname)
 DATABASE_URL=postgresql://postgres:password_kamu@localhost:5432/inventaris_pakaian
 
-# Kunci Rahasia Better Auth (Gunakan string acak minimal 32 karakter)
-BETTER_AUTH_SECRET=rahasia_super_aman_32_karakter_wajib_diubah_saat_produksi
+# Kunci Rahasia Better Auth — WAJIB diganti dengan string acak (min. 32 karakter)
+BETTER_AUTH_SECRET=<hasil-generate-di-bawah>
 BETTER_AUTH_URL=http://localhost:3001
 
 # Port Backend & URL Frontend
@@ -111,7 +117,15 @@ PORT=3001
 FRONTEND_URL=http://localhost:5173
 ```
 
-*(Opsional)* Jika ingin mengonfigurasi endpoint API custom pada frontend, buat file `apps/frontend/.env`:
+Generate `BETTER_AUTH_SECRET` yang aman:
+```bash
+node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+```
+
+> [!IMPORTANT]
+> Backend **menolak start** jika `DATABASE_URL` / `BETTER_AUTH_SECRET` kosong, secret kurang dari 32 karakter, atau masih memakai nilai contoh dari `.env.example`. File `.env` sudah di-ignore oleh Git — **jangan pernah commit file `.env`**. Lihat [`docs/SECURITY.md`](docs/SECURITY.md).
+
+`apps/frontend/.env` berisi alamat backend (default sudah benar untuk lokal):
 ```env
 VITE_API_URL=http://localhost:3001
 ```
@@ -148,27 +162,30 @@ npm run db:seed
 
 ### 5. Menjalankan Aplikasi di Lingkungan Lokal
 
-Untuk menjalankan frontend dan backend secara bersamaan, buka dua jendela/tab terminal di direktori root:
+Jalankan backend + frontend sekaligus dari direktori root (menggunakan `concurrently`):
 
-#### Terminal 1 — Menjalankan Backend:
 ```bash
-npm run dev:backend
+npm run dev
 ```
-*Backend server aktif di:* `http://localhost:3001`
 
-#### Terminal 2 — Menjalankan Frontend:
-```bash
-npm run dev:frontend
-```
-*Frontend aplikasi aktif di:* `http://localhost:5173`
+| Service | URL |
+| :--- | :--- |
+| Frontend (Vite) | `http://localhost:5173` |
+| Backend (Express) | `http://localhost:3001` |
+| Health check | `http://localhost:3001/api/health` |
 
-> **Tips Alternatif:**
-> Anda juga dapat menjalankan kedua service sekaligus dalam 1 perintah jika menginstal paket `concurrently` di root:
-> ```bash
-> npm run dev
-> ```
+Tekan `Ctrl+C` untuk menghentikan keduanya. Jika ingin menjalankan terpisah, gunakan `npm run dev:backend` dan `npm run dev:frontend` di dua terminal.
 
 Buka peramban Anda di [http://localhost:5173](http://localhost:5173) untuk mengakses sistem GarmentFlow V2.
+
+#### Troubleshooting
+| Gejala | Penyebab & Solusi |
+| :--- | :--- |
+| `[env] Konfigurasi apps/backend/.env tidak valid` | Lengkapi `.env` sesuai pesan error (lihat langkah 3). |
+| `ECONNREFUSED 127.0.0.1:5432` | PostgreSQL belum berjalan. Windows: `Get-Service postgresql*` lalu `Start-Service <nama>` (perlu Administrator). |
+| `EADDRINUSE :3001` / `:5173` | Port sudah dipakai proses lain — hentikan proses lama atau ubah `PORT`. |
+| Login gagal setelah ganti secret | Normal: sesi lama tidak valid lagi. Login ulang. |
+| `429 Terlalu banyak percobaan` | Rate limit login (10x / 15 menit / IP). Tunggu atau restart backend (limit disimpan di memori). |
 
 ---
 
@@ -176,6 +193,7 @@ Buka peramban Anda di [http://localhost:5173](http://localhost:5173) untuk menga
 
 | Perintah | Lokasi Eksekusi | Deskripsi |
 | :--- | :--- | :--- |
+| `npm run dev` | Root | Menjalankan backend + frontend sekaligus (`concurrently`) |
 | `npm run dev:frontend` | Root | Menjalankan Vite dev server untuk frontend (`:5173`) |
 | `npm run dev:backend` | Root | Menjalankan Express dev server dengan `tsx watch` (`:3001`) |
 | `npm run db:push` | Root | Melakukan sinkronisasi skema Drizzle ORM langsung ke database |
@@ -193,6 +211,23 @@ Untuk membaca dokumentasi arsitektur mendalam, detail skema database, alur auten
 
 ---
 
+## 🔒 Keamanan
+
+| Lapisan | Implementasi |
+| :--- | :--- |
+| Kredensial | `.env` di-ignore Git; hanya `.env.example` (placeholder) yang di-commit |
+| Validasi konfigurasi | `src/lib/env.ts` — server berhenti jika secret kosong/lemah/nilai contoh |
+| Brute-force | `express-rate-limit` — 10 percobaan / 15 menit / IP pada sign-in & sign-up |
+| HTTP headers | `helmet` (X-Frame-Options, CSP, nosniff, dll.) + `x-powered-by` dimatikan |
+| Payload | `express.json({ limit: "1mb" })` |
+| Error handling | Handler global JSON; stack trace tidak pernah dikirim ke client |
+| Sesi | Better Auth — cookie HTTP-only, sesi disimpan di database |
+| Data scoping | Semua query difilter per `req.user.id` |
+
+Kebijakan lengkap & checklist sebelum push: 👉 **[`docs/SECURITY.md`](docs/SECURITY.md)**
+
+---
+
 ## ⚠️ Known Limitations & Pending Features (Daftar Hal yang Masih Perlu Dikembangkan)
 
 Berdasarkan audit teknis arsitektur sistem terkini, berikut adalah beberapa area dan fitur yang masih dalam tahap pengembangan lanjutan (*pending*):
@@ -207,8 +242,10 @@ Berdasarkan audit teknis arsitektur sistem terkini, berikut adalah beberapa area
    - Metrik statistik `totalReports` masih bernilai `0` (placeholder) karena fitur *export* laporan inventaris berkala (format PDF/Excel) masih dalam antrean pengembangan (*roadmap*).
 5. **Strategi Penghapusan Data Inventaris (*Soft Delete*)**:
    - Penghapusan barang yang pernah tercatat dalam transaksi keluar (`outgoing_transaction_item`) memerlukan penerapan *soft-delete* (`is_deleted`) untuk menghindari pelanggaran batasan relasi *foreign key* PostgreSQL.
-6. **Variabel Lingkungan Frontend Client Dinamis**:
-   - Klien frontend saat ini mengarah ke `http://localhost:3001` secara default dan disarankan menggunakan pengikatan `import.meta.env.VITE_API_URL` sebelum *deployment* ke multi-environment.
+6. **Roadmap Arsitektur** (dari laporan analisis kode):
+   - Memisahkan logika bisnis ke layer `services/`, shared types package frontend–backend, `@tanstack/react-query`, automated tests (Vitest), dan code-splitting bundle frontend.
+
+> ✅ **Sudah diselesaikan:** base URL frontend kini memakai `VITE_API_URL`; global error handler, React Error Boundary, rate limiting, helmet, validasi env, dan index database telah ditambahkan.
 
 ---
 

@@ -278,6 +278,31 @@ sequenceDiagram
 4. **Rejection**: Jika token tidak ada atau tidak valid, langsung mengembalikan respons `401 Unauthorized` dengan pesan bahasa Indonesia yang ramah pengguna.
 5. **Kustom Validasi Sign-Up**: Pada endpoint `POST /api/auth/sign-up/email`, server melakukan validasi pra-registrasi guna memastikan tidak ada duplikasi `email`, `name`, maupun `phone` sebelum didelegasikan ke engine Better Auth.
 
+### 3.1 Rantai Middleware & Lapisan Keamanan Backend
+
+Urutan eksekusi di `apps/backend/src/index.ts`:
+
+```mermaid
+flowchart LR
+    A["lib/env.ts (validasi .env)"] --> B[helmet]
+    B --> C["cors (FRONTEND_URL)"]
+    C --> D["express.json 1mb"]
+    D --> E["authRateLimiter (sign-in / sign-up)"]
+    E --> F["Routes + requireAuth"]
+    F --> G["notFoundHandler (/api 404)"]
+    G --> H[errorHandler]
+```
+
+| Komponen | File | Fungsi |
+| :--- | :--- | :--- |
+| Validasi env | `src/lib/env.ts` | Diimpor pertama; `process.exit(1)` jika `DATABASE_URL`/`BETTER_AUTH_SECRET` kosong, secret < 32 karakter, atau nilai contoh. |
+| Security headers | `helmet` | CSP, `X-Frame-Options`, `X-Content-Type-Options`, dll.; `x-powered-by` dimatikan. |
+| Rate limiting | `src/middleware/rateLimit.ts` | 10 request / 15 menit / IP pada `/api/auth/sign-in*` & `/api/auth/sign-up*` → `429`. In-memory (reset saat restart). |
+| 404 JSON | `src/middleware/errorHandler.ts` | Route `/api/*` tak dikenal → `{ error }` 404. |
+| Global error handler | `src/middleware/errorHandler.ts` | JSON rusak → 400, payload besar → 413, lainnya → 500 generik (stack trace hanya di log server). |
+
+**Frontend:** `src/components/ErrorBoundary.tsx` membungkus seluruh route sehingga runtime error menampilkan fallback UI (detail error hanya pada mode dev), bukan layar kosong. Base URL API dibaca dari `import.meta.env.VITE_API_URL` di `src/lib/api.ts` dan dipakai juga oleh `auth-client.ts`.
+
 ---
 
 ## 4. Katalog Endpoint REST API (API Specifications)
@@ -396,6 +421,20 @@ Sebagai bagian dari continuous improvement arsitektur sistem, audit berkala meme
 - **Status Saat Ini**: Kartu ringkasan status stok (`AMAN`, `MENIPIS`, `KRITIS`) di halaman Monitoring Barang dihitung dari data 10 item pada halaman aktif (*current page items*).
 - **Rencana Teknis**: Menyediakan endpoint terdedikasi `GET /api/items/summary-stats` yang melakukan kueri agregasi SQL langsung ke basis data (`COUNT(*) FILTER (WHERE status = 'AMAN')`) untuk menghitung status seluruh SKU inventaris.
 
-### 6.5 Fleksibilitas Konfigurasi Klien (Dynamic Base URL)
-- **Status Saat Ini**: Modul klien API frontend mengacu ke port lokal `http://localhost:3001`.
-- **Rencana Teknis**: Mengikat seluruh pemanggilan client fetch ke `import.meta.env.VITE_API_URL || 'http://localhost:3001'` guna mempermudah deployment ke lingkungan *staging* dan *production*.
+### 6.5 Fleksibilitas Konfigurasi Klien (Dynamic Base URL) — ✅ Selesai
+- **Status**: Seluruh pemanggilan client fetch dan Better Auth client kini memakai `import.meta.env.VITE_API_URL || 'http://localhost:3001'` (tipe dideklarasikan di `src/vite-env.d.ts`).
+
+### 6.6 Index Database — ✅ Selesai
+- Ditambahkan index `item_name_idx`, `item_warehouse_id_idx`, `item_created_by_id_idx` (kolom `code` sudah ter-index via `UNIQUE`).
+- Catatan: `drizzle-kit push` selalu melaporkan "Changes applied" karena nama FK `activity_log_outgoing_transaction_id_outgoing_transaction_id_fk` > 63 karakter dipotong PostgreSQL (NOTICE `truncate_identifier`). Tidak berbahaya.
+
+### 6.7 Roadmap Arsitektur Lanjutan
+| Prioritas | Item |
+| :--- | :--- |
+| P2 | Pisahkan logika bisnis route (`items.ts`, `outgoing.ts`) ke layer `services/` |
+| P2 | Shared types package (derive dari Drizzle schema) untuk frontend & backend |
+| P2 | Validasi input skema (`zod`) pada seluruh body request |
+| P3 | Automated tests (Vitest) untuk transfer, outgoing, validasi kapasitas |
+| P3 | `@tanstack/react-query` untuk caching & deduplikasi fetch |
+| P3 | Code-splitting route frontend (bundle > 500 kB) |
+| P3 | Composite unique `item (code, created_by_id)` agar kode barang unik per user |
