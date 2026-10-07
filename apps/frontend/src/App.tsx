@@ -1,6 +1,7 @@
 import React from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { authClient } from './lib/auth-client';
+import ErrorBoundary from './components/ErrorBoundary';
 import LoginPage from './pages/LoginPage';
 import DashboardPage from './pages/DashboardPage';
 import MonitoringPage from './pages/MonitoringPage';
@@ -35,6 +36,7 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
 const App: React.FC = () => {
   return (
     <Router>
+      <ErrorBoundary>
       <Routes>
         <Route path="/" element={<Navigate to="/login" replace />} />
         <Route path="/login" element={<LoginPage />} />
@@ -46,6 +48,7 @@ const App: React.FC = () => {
         <Route path="/profil" element={<ProtectedRoute><ProfilPage /></ProtectedRoute>} />
         <Route path="/pengaturan" element={<ProtectedRoute><PengaturanPage /></ProtectedRoute>} />
       </Routes>
+      </ErrorBoundary>
     </Router>
   );
 };

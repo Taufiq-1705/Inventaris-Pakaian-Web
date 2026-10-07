@@ -1,5 +1,4 @@
 import React, { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
 import Sidebar from '../components/Sidebar';
 import Header from '../components/Header';
 import { api, type ProfileData, type ProfileStats } from '../lib/api';
@@ -176,6 +175,13 @@ const ProfilPage: React.FC = () => {
                     />
                   </div>
                 </div>
+
+                {error && (
+                  <div className="mt-6 flex items-center gap-2 rounded-lg border border-error/30 bg-error/10 px-4 py-3 text-sm text-error" role="alert">
+                    <span className="material-symbols-outlined text-lg">error</span>
+                    {error}
+                  </div>
+                )}
 
                 <div className="pt-8 border-t border-outline-variant/30 flex flex-wrap gap-4 items-center justify-between">
                   <div className="flex items-center gap-2 text-on-surface-variant">

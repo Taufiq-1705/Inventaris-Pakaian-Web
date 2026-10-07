@@ -39,13 +39,6 @@ const WarehouseCard: React.FC<WarehouseCardProps> = ({
     tertiary: 'bg-tertiary',
     error: 'bg-error',
   }[colorType];
-  
-  const textColorClass = {
-    primary: 'text-primary',
-    secondary: 'text-secondary',
-    tertiary: 'text-tertiary',
-    error: 'text-error font-bold',
-  }[colorType];
 
   const statusBgClass = {
     primary: 'bg-primary/10 text-primary border-primary/20',

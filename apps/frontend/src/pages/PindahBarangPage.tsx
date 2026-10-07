@@ -44,7 +44,6 @@ const PindahBarangPage: React.FC = () => {
 
   const projectedUsed = currentUsed + qtyInput;
   const percentage = totalCap > 0 ? Math.min((projectedUsed / totalCap) * 100, 100) : 0;
-  const showWarning = projectedUsed > totalCap;
 
   // When an item is selected, auto-set the source warehouse
   useEffect(() => {

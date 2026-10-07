@@ -1,4 +1,4 @@
-import React, { useState, useEffect, FormEvent } from 'react';
+import React, { useState, useEffect, type FormEvent } from 'react';
 import Sidebar from '../components/Sidebar';
 import Header from '../components/Header';
 import { api, type CategoryData, type WarehouseStats } from '../lib/api';

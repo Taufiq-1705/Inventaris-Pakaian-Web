@@ -30,12 +30,13 @@ const LoginPage: React.FC = () => {
 
       setLoading(true);
       try {
+        // username & phone are Better Auth `additionalFields` declared on the backend
+        const extraFields: Record<string, string> = { username, phone };
         const { error: signUpError } = await authClient.signUp.email({
           name: fullName,
           email,
           password,
-          username,
-          phone,
+          ...extraFields,
         });
 
         if (signUpError) {

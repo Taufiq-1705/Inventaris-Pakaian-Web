@@ -6,6 +6,7 @@ import {
   boolean,
   serial,
   unique,
+  index,
 } from "drizzle-orm/pg-core";
 import { relations } from "drizzle-orm";
 
@@ -127,7 +128,12 @@ export const item = pgTable("item", {
   entryDate: timestamp("entry_date").notNull().defaultNow(),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
-});
+}, (table) => ({
+  // item.code already indexed via .unique()
+  nameIdx: index("item_name_idx").on(table.name),
+  warehouseIdx: index("item_warehouse_id_idx").on(table.warehouseId),
+  createdByIdx: index("item_created_by_id_idx").on(table.createdById),
+}));
 
 // --- Transfer ---
 export const transfer = pgTable("transfer", {

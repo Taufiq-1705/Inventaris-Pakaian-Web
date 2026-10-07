@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { api, type ItemData, type CategoryData, type WarehouseStats } from '../lib/api';
+import { api, type CategoryData, type WarehouseStats } from '../lib/api';
 
 interface EditItemModalProps {
   itemId: number;

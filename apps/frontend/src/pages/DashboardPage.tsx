@@ -90,7 +90,7 @@ const DashboardPage: React.FC = () => {
                 icon="inventory" 
                 colorType="secondary" 
               />
-              {stats.warehouses.map((w, i) => (
+              {stats.warehouses.map((w) => (
                 <StatCard 
                   key={w.id}
                   title={w.name.toUpperCase()} 

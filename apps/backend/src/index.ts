@@ -3,6 +3,7 @@ import express from "express";
 import cors from "cors";
 import helmet from "helmet";
 import { authRateLimiter } from "./middleware/rateLimit.js";
+import { notFoundHandler, errorHandler } from "./middleware/errorHandler.js";
 
 // Route imports
 import authRoutes from "./routes/auth.js";
@@ -53,6 +54,10 @@ app.get("/api/health", (_req, res) => {
     version: "1.0.0",
   });
 });
+
+// --- Error Handling (must be registered last) --------------------------
+app.use("/api", notFoundHandler);
+app.use(errorHandler);
 
 // --- Start Server -------------------------------------------------------
 app.listen(PORT, () => {
