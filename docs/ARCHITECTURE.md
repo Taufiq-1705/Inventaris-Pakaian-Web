@@ -368,23 +368,21 @@ Seluruh endpoint bisnis berada di bawah prefiks `/api` dan mewajibkan sesi login
 ### 4.7 Kategori & Klasifikasi (`/api/categories`)
 | HTTP Method | Endpoint | Auth | Parameter / Payload Utama | Deskripsi & Fungsi |
 | :--- | :--- | :---: | :--- | :--- |
-| `GET` | `/api/categories` | Sesi | *None* | Mengambil seluruh daftar kategori pakaian beserta relasi anak sub-tipe (`itemTypes`) untuk mengisi cascading dropdown pada form UI. |
-
----
-
-### 4.8 Pengaturan Profil & Akun (`/api/profile`)
+| `GET` | `/api/categories` | Sesi | *None* | Mengambil seluruh daftar kategori pakaian beserta relasi anak sub-tipe (`itemTypes`) untuk mengisi cascading dropdown pa### 4.8 Pengaturan Profil & Akun (`/api/profile`)
 | HTTP Method | Endpoint | Auth | Parameter / Payload Utama | Deskripsi & Fungsi |
-| :--- | :--- | :---: | :--- | :--- |
+| :--- | :--- | :--- | :--- | :--- |
 | `GET` | `/api/profile` | Sesi | *None* | Mengambil data detail profil pengguna yang sedang login. |
 | `PUT` | `/api/profile` | Sesi | Body: `{ name?, username?, email?, phone? }` | Memperbarui informasi identitas profil pengguna dengan pengecekan keunikan email dan username. |
 | `GET` | `/api/profile/stats` | Sesi | *None* | Mengambil ringkasan aktivitas pengguna (total aktivitas masuk/keluar dan total mutasi transfer yang telah dieksekusi). |
-| `DELETE`| `/api/profile` | Sesi | *None* | **Penghapusan akun total**: Menghapus seluruh data pengguna secara berurutan (*cascading cleanup*: `activity_log` $\to$ `transfer` $\to$ `item` $\to$ `session` $\to$ `account` $\to$ `user`). |
+| `GET` | `/api/profile/sessions` | Sesi | *None* | Mengambil seluruh sesi perangkat aktif pengguna dengan deteksi OS, Browser, IP, dan flag `isCurrent`. |
+| `DELETE`| `/api/profile/sessions/:id` | Sesi | Param: `id` | Mencabut/revokasi sesi perangkat tertentu milik pengguna. |
+| `DELETE`| `/api/profile` | Sesi | *None* | **Penghapusan akun total**: Menghapus seluruh data pengguna secara berurutan (*cascading cleanup*: `activity_log` $\to$ `outgoing_transaction` $\to$ `transfer` $\to$ `item` $\to$ `session` $\to$ `account` $\to$ `user`). |
 
 ---
 
 ### 4.9 System Health Check
 | HTTP Method | Endpoint | Auth | Parameter / Payload Utama | Deskripsi & Fungsi |
-| :--- | :--- | :---: | :--- | :--- |
+| :--- | :--- | :--- | :--- | :--- |
 | `GET` | `/api/health` | Publik | *None* | Memverifikasi ketersediaan server backend dan timestamp respon server. |
 
 ---
@@ -396,18 +394,17 @@ Seluruh endpoint bisnis berada di bawah prefiks `/api` dan mewajibkan sesi login
 | **Kapasitas Gudang Penuh** | Sistem menolak transfer jika `quantity > destWarehouse.maxCapacity - destCurrentStock` dengan error code `400`. |
 | **Restriksi Kategori Gudang** | Jika `warehouse.allowedCategoryId` terdefinisi (misal: Gudang 1 hanya Pakaian Atas), barang dari kategori lain akan otomatis ditolak. |
 | **Pencegahan Stok Negatif** | Mutasi transfer atau transaksi keluar menolak operasi jika stok fisik tersedia kurang dari kuantitas yang diminta. |
-| **Indikator Level Stok Otomatis** | Nilai kolom `status` pada tabel `item` dihitung secara dinamis saat *insert/update*: `KRITIS` (≤ 20 pcs), `MENIPIS` (21–50 pcs), dan `AMAN` (> 50 pcs). |
+| **Indikator Level Stok Otomatis** | Nilai kolom `status` pada tabel `item` dihitung secara dinamis saat *insert/update*: `KRITIS` (≤ 20 pcs), `MENIPIS` (21–50 pcs), dan `AMAN` (> 50 pcs) via `src/lib/businessRules.ts`. |
 | **Isolasi Akun Multi-Pengguna** | Setiap kueri database pada modul barang, transaksi keluar, mutasi, dan dashboard memfilter dengan `createdById = req.user.id`, memastikan keamanan dan privasi data antar-pengguna. |
 
 ---
 
 ## 6. Kesenjangan Sistem & Rencana Peningkatan (System Gaps & Roadmap)
 
-Sebagai bagian dari continuous improvement arsitektur sistem, audit berkala memetakan kesenjangan teknis yang menjadi prioritas pengembangan tahap berikutnya:
+Sebagai bagian dari continuous improvement arsitektur sistem, audit berkala memetakan status implementasi dan kesenjangan teknis:
 
-### 6.1 Manajemen Sesi Perangkat (Active Session Management)
-- **Status Saat Ini**: Antarmuka `PengaturanPage` menampilkan kartu daftar perangkat login menggunakan data tiruan (*mock data*).
-- **Rencana Teknis**: Mengekspos endpoint `GET /api/auth/sessions` yang membaca data tabel `session` (didukung oleh Better Auth `storeSessionInDatabase: true`) dan endpoint `DELETE /api/auth/sessions/:id` untuk fitur *force logout* perangkat spesifik dari jarak jauh.
+### 6.1 Manajemen Sesi Perangkat (Active Session Management) — ✅ Selesai
+- **Status**: Antarmuka `PengaturanPage` kini terhubung langsung ke `GET /api/profile/sessions` dan `DELETE /api/profile/sessions/:id` yang membaca data tabel `session` Better Auth. Menampilkan status perangkat aktif secara real-time dengan opsi pencabutan sesi jarak jauh.
 
 ### 6.2 Manajemen Berkas & Media (File Storage Strategy)
 - **Status Saat Ini**: Foto profil akun menggunakan tautan gambar statis dan belum memiliki pipa unggah berkas (*file upload pipeline*).
@@ -417,24 +414,27 @@ Sebagai bagian dari continuous improvement arsitektur sistem, audit berkala meme
 - **Status Saat Ini**: Operasi `DELETE /api/items/:id` melakukan *hard-delete* yang dapat berbenturan dengan catatan historis `outgoing_transaction_item` jika barang terkait pernah dikeluarkan.
 - **Rencana Teknis**: Mengadopsi kolom `deleted_at: timestamp` (*soft-delete pattern*) pada tabel `item` sehingga rekaman audit, nota transaksi keluar, dan laporan akuntansi tetap utuh tanpa merusak integritas *foreign key*.
 
-### 6.4 Agregasi Metrik Monitoring Berbasis Database
-- **Status Saat Ini**: Kartu ringkasan status stok (`AMAN`, `MENIPIS`, `KRITIS`) di halaman Monitoring Barang dihitung dari data 10 item pada halaman aktif (*current page items*).
-- **Rencana Teknis**: Menyediakan endpoint terdedikasi `GET /api/items/summary-stats` yang melakukan kueri agregasi SQL langsung ke basis data (`COUNT(*) FILTER (WHERE status = 'AMAN')`) untuk menghitung status seluruh SKU inventaris.
+### 6.4 Agregasi Metrik Monitoring Berbasis Database — ✅ Selesai
+- **Status**: Endpoint `GET /api/items` kini menyertakan agregasi SQL `summary: { total, aman, menipis, kritis }` menggunakan `COUNT(*) FILTER (...)` dari basis data, sehingga kartu metrik di `MonitoringPage` akurat mencerminkan seluruh inventaris pengguna, bukan hanya 10 item per halaman.
 
 ### 6.5 Fleksibilitas Konfigurasi Klien (Dynamic Base URL) — ✅ Selesai
 - **Status**: Seluruh pemanggilan client fetch dan Better Auth client kini memakai `import.meta.env.VITE_API_URL || 'http://localhost:3001'` (tipe dideklarasikan di `src/vite-env.d.ts`).
 
-### 6.6 Index Database — ✅ Selesai
-- Ditambahkan index `item_name_idx`, `item_warehouse_id_idx`, `item_created_by_id_idx` (kolom `code` sudah ter-index via `UNIQUE`).
-- Catatan: `drizzle-kit push` selalu melaporkan "Changes applied" karena nama FK `activity_log_outgoing_transaction_id_outgoing_transaction_id_fk` > 63 karakter dipotong PostgreSQL (NOTICE `truncate_identifier`). Tidak berbahaya.
+### 6.6 Index Database & Integritas Seeder — ✅ Selesai
+- Ditambahkan index `item_name_idx`, `item_warehouse_id_idx`, `item_created_by_id_idx`.
+- Skrip `db:seed` dan cascade delete profil telah diperbaiki untuk menangani `outgoing_transaction` dan `outgoing_transaction_item` secara aman tanpa pelanggaran *foreign key*.
 
-### 6.7 Roadmap Arsitektur Lanjutan
+### 6.7 Automated Testing Suite — ✅ Selesai (Fase Awal)
+- Framework Vitest terpasang di `apps/backend` dengan script `npm run test`.
+- Modul `src/lib/businessRules.ts` dan test suite `tests/business-rules.test.ts` (13 tests) memverifikasi kalkulasi stok, aturan kapasitas gudang, kategori, dan serial penomoran transaksi keluar.
+
+### 6.8 Roadmap Arsitektur Lanjutan
 | Prioritas | Item |
 | :--- | :--- |
 | P2 | Pisahkan logika bisnis route (`items.ts`, `outgoing.ts`) ke layer `services/` |
 | P2 | Shared types package (derive dari Drizzle schema) untuk frontend & backend |
 | P2 | Validasi input skema (`zod`) pada seluruh body request |
-| P3 | Automated tests (Vitest) untuk transfer, outgoing, validasi kapasitas |
+| P3 | Menambah integration test HTTP untuk route transfer dan outgoing |
 | P3 | `@tanstack/react-query` untuk caching & deduplikasi fetch |
 | P3 | Code-splitting route frontend (bundle > 500 kB) |
 | P3 | Composite unique `item (code, created_by_id)` agar kode barang unik per user |

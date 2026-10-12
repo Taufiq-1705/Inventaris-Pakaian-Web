@@ -1,14 +1,46 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Sidebar from '../components/Sidebar';
 import Header from '../components/Header';
 import { authClient } from '../lib/auth-client';
 import { api } from '../lib/api';
 
+interface UserSession {
+  id: string;
+  ipAddress: string;
+  createdAt: string;
+  expiresAt: string;
+  isCurrent: boolean;
+  deviceName: string;
+  os: string;
+  browser: string;
+  icon: string;
+}
+
 const PengaturanPage: React.FC = () => {
   const navigate = useNavigate();
-  const [pushEnabled, setPushEnabled] = useState(true);
-  const [emailEnabled, setEmailEnabled] = useState(true);
+
+  // Notification preferences (persisted in localStorage)
+  const [pushEnabled, setPushEnabled] = useState(() => {
+    const saved = localStorage.getItem('garmentflow_push_enabled');
+    return saved !== null ? saved === 'true' : true;
+  });
+  const [emailEnabled, setEmailEnabled] = useState(() => {
+    const saved = localStorage.getItem('garmentflow_email_enabled');
+    return saved !== null ? saved === 'true' : true;
+  });
+
+  const togglePush = () => {
+    const next = !pushEnabled;
+    setPushEnabled(next);
+    localStorage.setItem('garmentflow_push_enabled', String(next));
+  };
+
+  const toggleEmail = () => {
+    const next = !emailEnabled;
+    setEmailEnabled(next);
+    localStorage.setItem('garmentflow_email_enabled', String(next));
+  };
 
   // Password change state
   const [currentPassword, setCurrentPassword] = useState('');
@@ -17,6 +49,33 @@ const PengaturanPage: React.FC = () => {
   const [passwordMsg, setPasswordMsg] = useState('');
   const [passwordError, setPasswordError] = useState('');
   const [changingPassword, setChangingPassword] = useState(false);
+
+  // Active Sessions state
+  const [sessions, setSessions] = useState<UserSession[]>([]);
+  const [loadingSessions, setLoadingSessions] = useState(true);
+
+  const fetchSessions = () => {
+    setLoadingSessions(true);
+    api<{ sessions: UserSession[] }>('/api/profile/sessions')
+      .then(res => setSessions(res.sessions || []))
+      .catch(console.error)
+      .finally(() => setLoadingSessions(false));
+  };
+
+  useEffect(() => {
+    fetchSessions();
+  }, []);
+
+  const handleRevokeSession = async (sessionId: string) => {
+    if (window.confirm('Apakah Anda yakin ingin mencabut sesi perangkat ini?')) {
+      try {
+        await api(`/api/profile/sessions/${sessionId}`, { method: 'DELETE' });
+        fetchSessions();
+      } catch (err: any) {
+        alert(err.message || 'Gagal mencabut sesi');
+      }
+    }
+  };
 
   const handleLogout = async () => {
     if (window.confirm('Apakah Anda yakin ingin keluar dari sistem?')) {
@@ -71,7 +130,7 @@ const PengaturanPage: React.FC = () => {
   };
 
   const handleDeleteAccount = async () => {
-    if (window.confirm('PERINGATAN: Semua data akan dihapus secara permanen. Apakah Anda yakin?')) {
+    if (window.confirm('PERINGATAN: Semua data inventaris, log, dan riwayat mutasi akan dihapus secara permanen. Apakah Anda yakin?')) {
       try {
         await api('/api/profile', { method: 'DELETE' });
         await authClient.signOut();
@@ -157,65 +216,74 @@ const PengaturanPage: React.FC = () => {
             </form>
           </div>
 
-          {/* CARD 2: Perangkat Login */}
+          {/* CARD 2: Perangkat Login (Terhubung ke Better Auth session) */}
           <div className="col-span-12 lg:col-span-5 bg-surface-container-low border border-outline-variant rounded-2xl p-8 flex flex-col">
-            <div className="flex items-start gap-4 mb-8">
-              <div className="w-12 h-12 rounded-xl bg-surface-container-highest border border-outline-variant flex items-center justify-center">
-                <span className="material-symbols-outlined text-on-surface-variant">devices</span>
+            <div className="flex items-start justify-between mb-8">
+              <div className="flex items-start gap-4">
+                <div className="w-12 h-12 rounded-xl bg-surface-container-highest border border-outline-variant flex items-center justify-center">
+                  <span className="material-symbols-outlined text-on-surface-variant">devices</span>
+                </div>
+                <div>
+                  <h3 className="text-lg font-bold text-on-surface">Perangkat Login</h3>
+                  <p className="text-sm text-on-surface-variant">Sesi aktif yang saat ini terautentikasi.</p>
+                </div>
               </div>
-              <div>
-                <h3 className="text-lg font-bold text-on-surface">Perangkat Login</h3>
-                <p className="text-sm text-on-surface-variant">Perangkat yang saat ini login ke akun Anda.</p>
-              </div>
+              <button 
+                onClick={fetchSessions}
+                title="Segarkan Sesi" 
+                className="text-on-surface-variant hover:text-primary transition-colors p-1"
+              >
+                <span className={`material-symbols-outlined text-sm ${loadingSessions ? 'animate-spin' : ''}`}>refresh</span>
+              </button>
             </div>
+
             <div className="space-y-4 flex-1">
-              {/* Device Item 1 */}
-              <div className="flex items-center gap-4 p-4 bg-surface-container rounded-xl border border-outline-variant/50">
-                <span className="material-symbols-outlined text-on-surface-variant">laptop_mac</span>
-                <div className="flex-1">
-                  <div className="flex items-center gap-2">
-                    <p className="text-sm font-semibold text-on-surface">MacBook Air M1</p>
-                    <span className="text-[10px] bg-secondary/10 text-secondary px-1.5 py-0.5 rounded font-bold uppercase">Perangkat Ini</span>
-                  </div>
-                  <p className="text-[11px] text-on-surface-variant">macOS • Chrome • Jakarta, Indonesia</p>
+              {loadingSessions ? (
+                <div className="py-8 text-center text-on-surface-variant text-sm">
+                  <span className="material-symbols-outlined animate-spin text-2xl text-primary mb-2 block">sync</span>
+                  Memuat data sesi...
                 </div>
-              </div>
-              
-              {/* Device Item 2 */}
-              <div className="flex items-center gap-4 p-4 bg-surface-container rounded-xl border border-outline-variant/50">
-                <span className="material-symbols-outlined text-on-surface-variant">smartphone</span>
-                <div className="flex-1">
-                  <div className="flex justify-between items-start">
-                    <p className="text-sm font-semibold text-on-surface">iPhone 13</p>
-                    <span className="text-[10px] text-on-surface-variant uppercase">3 hari yang lalu</span>
-                  </div>
-                  <p className="text-[11px] text-on-surface-variant">iOS • Safari • Jakarta, Indonesia</p>
+              ) : sessions.length === 0 ? (
+                <div className="py-8 text-center text-on-surface-variant text-sm">
+                  Tidak ada sesi aktif lain.
                 </div>
-                <button className="text-on-surface-variant hover:text-on-surface transition-colors">
-                  <span className="material-symbols-outlined text-[18px]">more_vert</span>
-                </button>
-              </div>
-              
-              {/* Device Item 3 */}
-              <div className="flex items-center gap-4 p-4 bg-surface-container rounded-xl border border-outline-variant/50">
-                <span className="material-symbols-outlined text-on-surface-variant">desktop_windows</span>
-                <div className="flex-1">
-                  <div className="flex justify-between items-start">
-                    <p className="text-sm font-semibold text-on-surface">Windows PC</p>
-                    <span className="text-[10px] text-on-surface-variant uppercase">1 minggu lalu</span>
+              ) : (
+                sessions.map((s) => (
+                  <div key={s.id} className="flex items-center gap-4 p-4 bg-surface-container rounded-xl border border-outline-variant/50">
+                    <span className="material-symbols-outlined text-on-surface-variant text-2xl">{s.icon}</span>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <p className="text-sm font-semibold text-on-surface truncate">{s.deviceName}</p>
+                        {s.isCurrent && (
+                          <span className="text-[10px] bg-secondary/15 text-secondary border border-secondary/30 px-1.5 py-0.5 rounded font-bold uppercase shrink-0">
+                            Perangkat Ini
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-[11px] text-on-surface-variant truncate">
+                        {s.os} • {s.browser} • IP: {s.ipAddress}
+                      </p>
+                      <p className="text-[10px] text-on-surface-variant/60 mt-0.5">
+                        Aktif sejak: {new Date(s.createdAt).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}
+                      </p>
+                    </div>
+                    {!s.isCurrent && (
+                      <button 
+                        onClick={() => handleRevokeSession(s.id)}
+                        title="Cabut Sesi Perangkat"
+                        className="text-error/70 hover:text-error hover:bg-error/10 p-2 rounded-lg transition-colors"
+                      >
+                        <span className="material-symbols-outlined text-[18px]">logout</span>
+                      </button>
+                    )}
                   </div>
-                  <p className="text-[11px] text-on-surface-variant">Windows • Chrome • Bandung, Indonesia</p>
-                </div>
-                <button className="text-on-surface-variant hover:text-on-surface transition-colors">
-                  <span className="material-symbols-outlined text-[18px]">more_vert</span>
-                </button>
-              </div>
+                ))
+              )}
             </div>
             
-            <button className="w-full mt-6 flex items-center justify-between group p-2 text-sm text-on-surface-variant hover:text-on-surface transition-all">
-              <span>Lihat semua perangkat login</span>
-              <span className="material-symbols-outlined text-[18px] group-hover:translate-x-1 transition-transform">chevron_right</span>
-            </button>
+            <p className="w-full mt-6 text-center text-xs text-on-surface-variant/70">
+              Total sesi aktif: {sessions.length} perangkat
+            </p>
           </div>
 
           {/* CARD 3: Notifikasi */}
@@ -240,7 +308,7 @@ const PengaturanPage: React.FC = () => {
                     type="checkbox" 
                     className="sr-only peer" 
                     checked={pushEnabled}
-                    onChange={() => setPushEnabled(!pushEnabled)}
+                    onChange={togglePush}
                   />
                   <div className="w-11 h-6 bg-surface-container-highest peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
                 </label>
@@ -255,7 +323,7 @@ const PengaturanPage: React.FC = () => {
                     type="checkbox" 
                     className="sr-only peer" 
                     checked={emailEnabled}
-                    onChange={() => setEmailEnabled(!emailEnabled)}
+                    onChange={toggleEmail}
                   />
                   <div className="w-11 h-6 bg-surface-container-highest peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
                 </label>
@@ -297,7 +365,7 @@ const PengaturanPage: React.FC = () => {
                 <p className="text-sm text-on-surface-variant">Keluar dari akun Anda saat ini.</p>
               </div>
             </div>
-            <p className="text-xs text-on-surface-variant mb-10 text-center flex-1">Anda akan keluar dari semua perangkat ini.</p>
+            <p className="text-xs text-on-surface-variant mb-10 text-center flex-1">Anda akan keluar dari sesi perangkat ini.</p>
             <button 
               onClick={handleLogout}
               className="w-full bg-surface-container border border-outline-variant text-on-surface font-bold py-3 rounded-xl hover:bg-surface-container-highest transition-all active:scale-95"

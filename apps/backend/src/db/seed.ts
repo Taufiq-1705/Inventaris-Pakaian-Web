@@ -8,6 +8,8 @@ import {
   item,
   activityLog,
   transfer,
+  outgoingTransaction,
+  outgoingTransactionItem,
 } from "./schema.js";
 import { sql } from "drizzle-orm";
 
@@ -23,6 +25,8 @@ async function seed() {
   // ─── Cleanup (in FK-safe order) ────────────────────────
   console.log("🧹 Cleaning existing data...");
   await db.delete(activityLog);
+  await db.delete(outgoingTransactionItem);
+  await db.delete(outgoingTransaction);
   await db.delete(transfer);
   await db.delete(item);
   await db.delete(warehouse);

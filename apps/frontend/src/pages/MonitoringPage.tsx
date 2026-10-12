@@ -56,16 +56,20 @@ const MonitoringPage: React.FC = () => {
       setItems(data.items);
       setPagination(data.pagination);
 
-      // Compute summary stats from current results
-      const aman = data.items.filter(i => i.status === 'AMAN').length;
-      const menipis = data.items.filter(i => i.status === 'MENIPIS').length;
-      const kritis = data.items.filter(i => i.status === 'KRITIS').length;
-      setSummaryStats({
-        total: data.pagination.total,
-        aman,
-        menipis,
-        kritis,
-      });
+      // Use database aggregated summary stats
+      if (data.summary) {
+        setSummaryStats(data.summary);
+      } else {
+        const aman = data.items.filter(i => i.status === 'AMAN').length;
+        const menipis = data.items.filter(i => i.status === 'MENIPIS').length;
+        const kritis = data.items.filter(i => i.status === 'KRITIS').length;
+        setSummaryStats({
+          total: data.pagination.total,
+          aman,
+          menipis,
+          kritis,
+        });
+      }
     } catch (err) {
       console.error('Failed to fetch items:', err);
     } finally {

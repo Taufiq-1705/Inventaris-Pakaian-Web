@@ -92,12 +92,21 @@ router.get("/", async (req, res) => {
     const whereClause =
       conditions.length > 0 ? and(...conditions) : undefined;
 
-    // Get total count
+    // Get total count and status summary breakdown
     const countResult = await db
-      .select({ count: sql<number>`count(*)` })
+      .select({
+        total: sql<number>`count(*)`,
+        aman: sql<number>`count(*) filter (where ${item.status} = 'AMAN')`,
+        menipis: sql<number>`count(*) filter (where ${item.status} = 'MENIPIS')`,
+        kritis: sql<number>`count(*) filter (where ${item.status} = 'KRITIS')`,
+      })
       .from(item)
       .where(whereClause);
-    const total = countResult[0]?.count ?? 0;
+
+    const total = Number(countResult[0]?.total ?? 0);
+    const aman = Number(countResult[0]?.aman ?? 0);
+    const menipis = Number(countResult[0]?.menipis ?? 0);
+    const kritis = Number(countResult[0]?.kritis ?? 0);
 
     // Get items with relations
     const items = await db
@@ -133,6 +142,12 @@ router.get("/", async (req, res) => {
         limit,
         total,
         totalPages: Math.ceil(total / limit),
+      },
+      summary: {
+        total,
+        aman,
+        menipis,
+        kritis,
       },
     });
   } catch (error) {

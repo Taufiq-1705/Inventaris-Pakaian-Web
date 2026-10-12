@@ -99,6 +99,12 @@ export interface ItemsResponse {
     total: number;
     totalPages: number;
   };
+  summary?: {
+    total: number;
+    aman: number;
+    menipis: number;
+    kritis: number;
+  };
 }
 
 // Categories

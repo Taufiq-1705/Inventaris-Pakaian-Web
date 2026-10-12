@@ -1,12 +1,57 @@
 import { Router } from "express";
 import { db } from "../db/index.js";
-import { user, item, activityLog, transfer, session, account } from "../db/schema.js";
-import { eq, sql } from "drizzle-orm";
+import { user, item, activityLog, transfer, session, account, outgoingTransaction } from "../db/schema.js";
+import { eq, and, gt, desc, sql } from "drizzle-orm";
 import { requireAuth } from "../middleware/auth.js";
 
 const router = Router();
 
 router.use(requireAuth);
+
+function parseUserAgent(ua?: string | null) {
+  if (!ua) {
+    return {
+      deviceName: "Perangkat Tak Dikenal",
+      os: "Unknown OS",
+      browser: "Unknown Browser",
+      icon: "devices",
+    };
+  }
+
+  let os = "Desktop";
+  let icon = "desktop_windows";
+  if (/windows/i.test(ua)) {
+    os = "Windows";
+    icon = "desktop_windows";
+  } else if (/macintosh|mac os x/i.test(ua)) {
+    os = "macOS";
+    icon = "laptop_mac";
+  } else if (/iphone|ipad|ipod/i.test(ua)) {
+    os = "iOS";
+    icon = "smartphone";
+  } else if (/android/i.test(ua)) {
+    os = "Android";
+    icon = "smartphone";
+  } else if (/linux/i.test(ua)) {
+    os = "Linux";
+    icon = "laptop_chromebook";
+  }
+
+  let browser = "Web Browser";
+  if (/edg/i.test(ua)) {
+    browser = "Edge";
+  } else if (/chrome|crios/i.test(ua)) {
+    browser = "Chrome";
+  } else if (/firefox|fxios/i.test(ua)) {
+    browser = "Firefox";
+  } else if (/safari/i.test(ua)) {
+    browser = "Safari";
+  }
+
+  const deviceName = os === "macOS" ? "MacBook / Apple Mac" : `${os} PC`;
+
+  return { deviceName, os, browser, icon };
+}
 
 /**
  * GET /api/profile
@@ -113,9 +158,75 @@ router.get("/stats", async (req, res) => {
 });
 
 /**
+ * GET /api/profile/sessions
+ * List active sessions for the current user (for PengaturanPage)
+ */
+router.get("/sessions", async (req, res) => {
+  try {
+    const userId = req.user!.id;
+    const currentSessionId = req.session?.id;
+
+    const activeSessions = await db
+      .select({
+        id: session.id,
+        ipAddress: session.ipAddress,
+        userAgent: session.userAgent,
+        createdAt: session.createdAt,
+        expiresAt: session.expiresAt,
+      })
+      .from(session)
+      .where(and(eq(session.userId, userId), gt(session.expiresAt, new Date())))
+      .orderBy(desc(session.createdAt));
+
+    const formatted = activeSessions.map((s) => {
+      const parsed = parseUserAgent(s.userAgent);
+      return {
+        id: s.id,
+        ipAddress: s.ipAddress || "127.0.0.1",
+        createdAt: s.createdAt,
+        expiresAt: s.expiresAt,
+        isCurrent: s.id === currentSessionId,
+        ...parsed,
+      };
+    });
+
+    res.json({ sessions: formatted });
+  } catch (error) {
+    console.error("Get sessions error:", error);
+    res.status(500).json({ error: "Gagal memuat sesi perangkat" });
+  }
+});
+
+/**
+ * DELETE /api/profile/sessions/:id
+ * Revoke a specific active session
+ */
+router.delete("/sessions/:id", async (req, res) => {
+  try {
+    const userId = req.user!.id;
+    const sessionId = req.params.id;
+
+    const targetSession = await db.query.session.findFirst({
+      where: and(eq(session.id, sessionId), eq(session.userId, userId)),
+    });
+
+    if (!targetSession) {
+      res.status(404).json({ error: "Sesi tidak ditemukan" });
+      return;
+    }
+
+    await db.delete(session).where(eq(session.id, sessionId));
+    res.json({ message: "Sesi berhasil dicabut" });
+  } catch (error) {
+    console.error("Revoke session error:", error);
+    res.status(500).json({ error: "Gagal mencabut sesi" });
+  }
+});
+
+/**
  * DELETE /api/profile
  * Delete the current user's account and ALL associated data.
- * Cascade order: activity_log → transfer → item → session → account → user
+ * Cascade order: activity_log → outgoing_transaction → transfer → item → session → account → user
  */
 router.delete("/", async (req, res) => {
   try {
@@ -124,19 +235,22 @@ router.delete("/", async (req, res) => {
     // 1. Delete all activity logs created by this user
     await db.delete(activityLog).where(eq(activityLog.createdById, userId));
 
-    // 2. Delete all transfers created by this user
+    // 2. Delete all outgoing transactions created by this user (items cascade automatically)
+    await db.delete(outgoingTransaction).where(eq(outgoingTransaction.createdById, userId));
+
+    // 3. Delete all transfers created by this user
     await db.delete(transfer).where(eq(transfer.createdById, userId));
 
-    // 3. Delete all items created by this user
+    // 4. Delete all items created by this user
     await db.delete(item).where(eq(item.createdById, userId));
 
-    // 4. Delete Better Auth sessions
+    // 5. Delete Better Auth sessions
     await db.delete(session).where(eq(session.userId, userId));
 
-    // 5. Delete Better Auth accounts (OAuth providers)
+    // 6. Delete Better Auth accounts (OAuth providers)
     await db.delete(account).where(eq(account.userId, userId));
 
-    // 6. Delete the user record itself
+    // 7. Delete the user record itself
     await db.delete(user).where(eq(user.id, userId));
 
     res.json({ message: "Akun dan semua data berhasil dihapus" });
@@ -147,4 +261,3 @@ router.delete("/", async (req, res) => {
 });
 
 export default router;
-
