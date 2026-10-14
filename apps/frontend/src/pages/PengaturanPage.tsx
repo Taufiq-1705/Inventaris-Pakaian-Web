@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Sidebar from '../components/Sidebar';
@@ -145,7 +146,7 @@ const PengaturanPage: React.FC = () => {
     <div className="dark bg-background text-on-background min-h-screen">
       <Sidebar />
       <Header />
-      
+
       {/* Main Content Area */}
       <main className="ml-[260px] min-h-screen p-container-padding pt-24">
         {/* Header Section */}
@@ -157,7 +158,7 @@ const PengaturanPage: React.FC = () => {
 
         {/* Settings Grid */}
         <div className="grid grid-cols-12 gap-6">
-          
+
           {/* CARD 1: Ubah Password */}
           <div className="col-span-12 lg:col-span-7 bg-surface-container-low border border-outline-variant rounded-2xl p-8">
             <div className="flex items-start gap-4 mb-8">
@@ -178,9 +179,9 @@ const PengaturanPage: React.FC = () => {
               )}
               <div className="space-y-2">
                 <label className="text-[10px] font-bold text-on-surface-variant uppercase tracking-widest">Password Lama</label>
-                <input 
-                  className="w-full bg-surface-container border border-outline-variant rounded-xl px-4 py-3 text-sm text-on-surface focus:ring-1 focus:ring-primary focus:border-primary placeholder:text-on-surface-variant/50 transition-all outline-none" 
-                  placeholder="Masukkan password lama" 
+                <input
+                  className="w-full bg-surface-container border border-outline-variant rounded-xl px-4 py-3 text-sm text-on-surface focus:ring-1 focus:ring-primary focus:border-primary placeholder:text-on-surface-variant/50 transition-all outline-none"
+                  placeholder="Masukkan password lama"
                   type="password"
                   value={currentPassword}
                   onChange={e => setCurrentPassword(e.target.value)}
@@ -188,9 +189,9 @@ const PengaturanPage: React.FC = () => {
               </div>
               <div className="space-y-2">
                 <label className="text-[10px] font-bold text-on-surface-variant uppercase tracking-widest">Password Baru</label>
-                <input 
-                  className="w-full bg-surface-container border border-outline-variant rounded-xl px-4 py-3 text-sm text-on-surface focus:ring-1 focus:ring-primary focus:border-primary placeholder:text-on-surface-variant/50 transition-all outline-none" 
-                  placeholder="Masukkan password baru" 
+                <input
+                  className="w-full bg-surface-container border border-outline-variant rounded-xl px-4 py-3 text-sm text-on-surface focus:ring-1 focus:ring-primary focus:border-primary placeholder:text-on-surface-variant/50 transition-all outline-none"
+                  placeholder="Masukkan password baru"
                   type="password"
                   value={newPassword}
                   onChange={e => setNewPassword(e.target.value)}
@@ -198,16 +199,16 @@ const PengaturanPage: React.FC = () => {
               </div>
               <div className="space-y-2">
                 <label className="text-[10px] font-bold text-on-surface-variant uppercase tracking-widest">Konfirmasi Password Baru</label>
-                <input 
-                  className="w-full bg-surface-container border border-outline-variant rounded-xl px-4 py-3 text-sm text-on-surface focus:ring-1 focus:ring-primary focus:border-primary placeholder:text-on-surface-variant/50 transition-all outline-none" 
-                  placeholder="Masukkan ulang password baru" 
+                <input
+                  className="w-full bg-surface-container border border-outline-variant rounded-xl px-4 py-3 text-sm text-on-surface focus:ring-1 focus:ring-primary focus:border-primary placeholder:text-on-surface-variant/50 transition-all outline-none"
+                  placeholder="Masukkan ulang password baru"
                   type="password"
                   value={confirmPassword}
                   onChange={e => setConfirmPassword(e.target.value)}
                 />
               </div>
-              <button 
-                className="bg-on-surface text-surface font-bold py-3 px-8 rounded-xl hover:bg-white transition-colors active:scale-95 disabled:opacity-50" 
+              <button
+                className="bg-on-surface text-surface font-bold py-3 px-8 rounded-xl hover:bg-white transition-colors active:scale-95 disabled:opacity-50"
                 type="submit"
                 disabled={changingPassword}
               >
@@ -228,9 +229,9 @@ const PengaturanPage: React.FC = () => {
                   <p className="text-sm text-on-surface-variant">Sesi aktif yang saat ini terautentikasi.</p>
                 </div>
               </div>
-              <button 
+              <button
                 onClick={fetchSessions}
-                title="Segarkan Sesi" 
+                title="Segarkan Sesi"
                 className="text-on-surface-variant hover:text-primary transition-colors p-1"
               >
                 <span className={`material-symbols-outlined text-sm ${loadingSessions ? 'animate-spin' : ''}`}>refresh</span>
@@ -268,7 +269,7 @@ const PengaturanPage: React.FC = () => {
                       </p>
                     </div>
                     {!s.isCurrent && (
-                      <button 
+                      <button
                         onClick={() => handleRevokeSession(s.id)}
                         title="Cabut Sesi Perangkat"
                         className="text-error/70 hover:text-error hover:bg-error/10 p-2 rounded-lg transition-colors"
@@ -280,7 +281,7 @@ const PengaturanPage: React.FC = () => {
                 ))
               )}
             </div>
-            
+
             <p className="w-full mt-6 text-center text-xs text-on-surface-variant/70">
               Total sesi aktif: {sessions.length} perangkat
             </p>
@@ -304,9 +305,9 @@ const PengaturanPage: React.FC = () => {
                   <p className="text-[11px] text-on-surface-variant">Terima notifikasi di browser atau perangkat.</p>
                 </div>
                 <label className="relative inline-flex items-center cursor-pointer">
-                  <input 
-                    type="checkbox" 
-                    className="sr-only peer" 
+                  <input
+                    type="checkbox"
+                    className="sr-only peer"
                     checked={pushEnabled}
                     onChange={togglePush}
                   />
@@ -319,9 +320,9 @@ const PengaturanPage: React.FC = () => {
                   <p className="text-[11px] text-on-surface-variant">Terima notifikasi penting melalui email.</p>
                 </div>
                 <label className="relative inline-flex items-center cursor-pointer">
-                  <input 
-                    type="checkbox" 
-                    className="sr-only peer" 
+                  <input
+                    type="checkbox"
+                    className="sr-only peer"
                     checked={emailEnabled}
                     onChange={toggleEmail}
                   />
@@ -346,7 +347,7 @@ const PengaturanPage: React.FC = () => {
               <span className="material-symbols-outlined text-error text-[18px] shrink-0">warning</span>
               <p className="text-[11px] text-error leading-relaxed font-medium">Semua data akan dihapus secara permanen dan tidak dapat dipulihkan.</p>
             </div>
-            <button 
+            <button
               onClick={handleDeleteAccount}
               className="w-full border border-error/50 text-error font-bold py-3 rounded-xl hover:bg-error hover:text-white transition-all active:scale-95"
             >
@@ -366,14 +367,14 @@ const PengaturanPage: React.FC = () => {
               </div>
             </div>
             <p className="text-xs text-on-surface-variant mb-10 text-center flex-1">Anda akan keluar dari sesi perangkat ini.</p>
-            <button 
+            <button
               onClick={handleLogout}
               className="w-full bg-surface-container border border-outline-variant text-on-surface font-bold py-3 rounded-xl hover:bg-surface-container-highest transition-all active:scale-95"
             >
               Log Out
             </button>
           </div>
-          
+
         </div>
       </main>
     </div>

@@ -7,10 +7,10 @@ import { eq, sql } from "drizzle-orm";
 
 const router = Router();
 
-// Middleware to prevent duplicate Name, Email, or Phone on registration
+// Middleware to prevent duplicate Name, Email, Username, or Phone on registration
 router.post("/sign-up/email", async (req, res, next) => {
   try {
-    const { name, email, phone } = req.body;
+    const { name, email, phone, username } = req.body;
 
     if (!name || !email) {
       return next(); // Delegate to Better Auth for standard missing input error
@@ -21,26 +21,49 @@ router.post("/sign-up/email", async (req, res, next) => {
       where: eq(sql`lower(${user.email})`, email.toLowerCase()),
     });
     if (existingEmail) {
-      res.status(400).json({ error: "Email sudah digunakan oleh akun lain" });
+      res.status(400).json({
+        message: "Email sudah digunakan oleh akun lain",
+        error: "Email sudah digunakan oleh akun lain",
+      });
       return;
     }
 
-    // 2. Check duplicate name (case-insensitive)
+    // 2. Check duplicate username (case-insensitive, if provided)
+    if (username) {
+      const existingUsername = await db.query.user.findFirst({
+        where: eq(sql`lower(${user.username})`, username.toLowerCase()),
+      });
+      if (existingUsername) {
+        res.status(400).json({
+          message: "Username sudah digunakan oleh akun lain. Silakan gunakan username lain.",
+          error: "Username sudah digunakan oleh akun lain. Silakan gunakan username lain.",
+        });
+        return;
+      }
+    }
+
+    // 3. Check duplicate name (case-insensitive)
     const existingName = await db.query.user.findFirst({
       where: eq(sql`lower(${user.name})`, name.toLowerCase()),
     });
     if (existingName) {
-      res.status(400).json({ error: "Nama sudah terdaftar. Silakan gunakan nama lain." });
+      res.status(400).json({
+        message: "Nama sudah terdaftar. Silakan gunakan nama lain.",
+        error: "Nama sudah terdaftar. Silakan gunakan nama lain.",
+      });
       return;
     }
 
-    // 3. Check duplicate phone (if provided)
+    // 4. Check duplicate phone (if provided)
     if (phone) {
       const existingPhone = await db.query.user.findFirst({
         where: eq(user.phone, phone),
       });
       if (existingPhone) {
-        res.status(400).json({ error: "Nomor HP sudah terdaftar. Silakan gunakan nomor lain." });
+        res.status(400).json({
+          message: "Nomor HP sudah terdaftar. Silakan gunakan nomor lain.",
+          error: "Nomor HP sudah terdaftar. Silakan gunakan nomor lain.",
+        });
         return;
       }
     }
@@ -48,7 +71,10 @@ router.post("/sign-up/email", async (req, res, next) => {
     next();
   } catch (error) {
     console.error("Signup validation error:", error);
-    res.status(500).json({ error: "Gagal memproses pendaftaran" });
+    res.status(500).json({
+      message: "Gagal memproses pendaftaran",
+      error: "Gagal memproses pendaftaran",
+    });
   }
 });
 

@@ -2,6 +2,16 @@ import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { authClient } from '../lib/auth-client';
 
+const getAuthErrorMessage = (err: any, fallback: string): string => {
+  if (!err) return fallback;
+  if (typeof err === 'string') return err;
+  if (typeof err.message === 'string' && err.message) return err.message;
+  if (typeof err.error === 'string' && err.error) return err.error;
+  if (typeof err.error?.message === 'string' && err.error.message) return err.error.message;
+  if (typeof err.statusText === 'string' && err.statusText) return err.statusText;
+  return fallback;
+};
+
 const LoginPage: React.FC = () => {
   const [isRegisterMode, setIsRegisterMode] = useState(false);
 
@@ -40,20 +50,18 @@ const LoginPage: React.FC = () => {
         });
 
         if (signUpError) {
-          setError(signUpError.message || 'Pendaftaran gagal');
+          setError(getAuthErrorMessage(signUpError, 'Pendaftaran gagal'));
           setLoading(false);
           return;
         }
 
         setLoading(false);
-        setSuccess('Pendaftaran berhasil! Silakan login dengan akun Anda.');
+        setSuccess('Pendaftaran berhasil! Mengalihkan ke dashboard...');
         setTimeout(() => {
-          setIsRegisterMode(false);
-          setSuccess('');
-          setPassword('');
-        }, 2000);
+          navigate('/dashboard');
+        }, 1000);
       } catch (err: any) {
-        setError(err.message || 'Terjadi kesalahan saat mendaftar');
+        setError(getAuthErrorMessage(err, 'Terjadi kesalahan saat mendaftar'));
         setLoading(false);
       }
 
@@ -71,14 +79,14 @@ const LoginPage: React.FC = () => {
         });
 
         if (signInError) {
-          setError(signInError.message || 'Email atau password salah');
+          setError(getAuthErrorMessage(signInError, 'Email atau password salah'));
           setLoading(false);
           return;
         }
 
         navigate('/dashboard');
       } catch (err: any) {
-        setError(err.message || 'Terjadi kesalahan saat login');
+        setError(getAuthErrorMessage(err, 'Terjadi kesalahan saat login'));
         setLoading(false);
       }
     }

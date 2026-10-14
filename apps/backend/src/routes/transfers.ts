@@ -7,8 +7,13 @@ import {
   activityLog,
   category,
 } from "../db/schema.js";
-import { eq, and, sql, desc } from "drizzle-orm";
+import { eq, and, or, sql, desc } from "drizzle-orm";
 import { requireAuth } from "../middleware/auth.js";
+import {
+  canWarehouseAcceptQuantity,
+  calculateStockStatus,
+  isWarehouseCategoryAllowed,
+} from "../lib/businessRules.js";
 
 const router = Router();
 
@@ -20,7 +25,7 @@ router.use(requireAuth);
  *
  * This is transactional — it:
  * 1. Validates source item has enough stock
- * 2. Validates destination warehouse has capacity
+ * 2. Validates destination warehouse has capacity (scoped to user's inventory)
  * 3. Decreases source item quantity
  * 4. Creates or updates destination item record
  * 5. Creates transfer record
@@ -32,21 +37,26 @@ router.post("/", async (req, res) => {
 
     // Basic validation
     if (!itemId || !sourceWarehouseId || !destWarehouseId || !quantity) {
-      res
-        .status(400)
-        .json({ error: "Item, gudang asal, gudang tujuan, dan jumlah wajib diisi" });
+      res.status(400).json({
+        message: "Item, gudang asal, gudang tujuan, dan jumlah wajib diisi",
+        error: "Item, gudang asal, gudang tujuan, dan jumlah wajib diisi",
+      });
       return;
     }
 
     if (quantity <= 0) {
-      res.status(400).json({ error: "Jumlah harus lebih dari 0" });
+      res.status(400).json({
+        message: "Jumlah harus lebih dari 0",
+        error: "Jumlah harus lebih dari 0",
+      });
       return;
     }
 
     if (sourceWarehouseId === destWarehouseId) {
-      res
-        .status(400)
-        .json({ error: "Gudang asal dan tujuan tidak boleh sama" });
+      res.status(400).json({
+        message: "Gudang asal dan tujuan tidak boleh sama",
+        error: "Gudang asal dan tujuan tidak boleh sama",
+      });
       return;
     }
 
@@ -56,169 +66,200 @@ router.post("/", async (req, res) => {
     });
 
     if (!sourceItem) {
-      res.status(404).json({ error: "Barang tidak ditemukan" });
+      res.status(404).json({
+        message: "Barang tidak ditemukan",
+        error: "Barang tidak ditemukan",
+      });
       return;
     }
 
     if (sourceItem.warehouseId !== sourceWarehouseId) {
-      res
-        .status(400)
-        .json({ error: "Barang tidak berada di gudang asal yang dipilih" });
+      res.status(400).json({
+        message: "Barang tidak berada di gudang asal yang dipilih",
+        error: "Barang tidak berada di gudang asal yang dipilih",
+      });
       return;
     }
 
     if (sourceItem.quantity < quantity) {
       res.status(400).json({
+        message: `Stok tidak mencukupi. Stok tersedia: ${sourceItem.quantity} pcs`,
         error: `Stok tidak mencukupi. Stok tersedia: ${sourceItem.quantity} pcs`,
       });
       return;
     }
 
-    // Check destination warehouse capacity
+    // Check destination warehouse
     const destWarehouse = await db.query.warehouse.findFirst({
       where: eq(warehouse.id, destWarehouseId),
     });
 
     if (!destWarehouse) {
-      res.status(404).json({ error: "Gudang tujuan tidak ditemukan" });
+      res.status(404).json({
+        message: "Gudang tujuan tidak ditemukan",
+        error: "Gudang tujuan tidak ditemukan",
+      });
       return;
     }
 
-    if (destWarehouse.allowedCategoryId && destWarehouse.allowedCategoryId !== sourceItem.categoryId) {
+    if (!isWarehouseCategoryAllowed(destWarehouse.allowedCategoryId, sourceItem.categoryId)) {
       const allowedCat = await db.query.category.findFirst({
-        where: eq(category.id, destWarehouse.allowedCategoryId),
+        where: eq(category.id, destWarehouse.allowedCategoryId!),
       });
       res.status(400).json({
+        message: `Gudang tujuan "${destWarehouse.name}" hanya menerima kategori "${allowedCat?.name || 'tertentu'}"`,
         error: `Gudang tujuan "${destWarehouse.name}" hanya menerima kategori "${allowedCat?.name || 'tertentu'}"`,
       });
       return;
     }
 
+    // Check destination warehouse capacity (scoped to user's stock in warehouse)
     const destStockResult = await db
       .select({
         currentStock: sql<number>`coalesce(sum(${item.quantity}), 0)`,
       })
       .from(item)
-      .where(eq(item.warehouseId, destWarehouseId));
+      .where(
+        and(
+          eq(item.warehouseId, destWarehouseId),
+          eq(item.createdById, req.user!.id)
+        )
+      );
 
     const destCurrentStock = Number(destStockResult[0]?.currentStock ?? 0);
-    const remainingCapacity = destWarehouse.maxCapacity - destCurrentStock;
+    const capacityCheck = canWarehouseAcceptQuantity(
+      destCurrentStock,
+      destWarehouse.maxCapacity,
+      quantity
+    );
 
-    if (quantity > remainingCapacity) {
+    if (!capacityCheck.allowed) {
       res.status(400).json({
-        error: `Kapasitas gudang tujuan tidak mencukupi. Sisa kapasitas: ${remainingCapacity} pcs`,
+        message: `Kapasitas gudang tujuan tidak mencukupi. Sisa kapasitas: ${capacityCheck.remainingCapacity} pcs`,
+        error: `Kapasitas gudang tujuan tidak mencukupi. Sisa kapasitas: ${capacityCheck.remainingCapacity} pcs`,
       });
       return;
     }
 
-    // --- Execute the transfer ---
-
-    // 1. Decrease source item quantity (or move entirely)
+    // --- Execute the transfer in transaction ---
     const newSourceQty = sourceItem.quantity - quantity;
-    let sourceStatus = "AMAN";
-    if (newSourceQty <= 0) sourceStatus = "KRITIS";
-    else if (newSourceQty <= 20) sourceStatus = "KRITIS";
-    else if (newSourceQty <= 50) sourceStatus = "MENIPIS";
+    const sourceStatus = calculateStockStatus(newSourceQty);
 
-    if (newSourceQty <= 0) {
-      // All stock is being moved — just change the item's warehouse
-      await db
-        .update(item)
-        .set({
-          warehouseId: destWarehouseId,
-          quantity: quantity, // reset to the transferred amount
-          status: quantity <= 20 ? "KRITIS" : quantity <= 50 ? "MENIPIS" : "AMAN",
-          updatedAt: new Date(),
-        })
-        .where(eq(item.id, itemId));
-    } else {
-      // Partial transfer — reduce source quantity
-      await db
-        .update(item)
-        .set({
-          quantity: newSourceQty,
-          status: sourceStatus,
-          updatedAt: new Date(),
-        })
-        .where(eq(item.id, itemId));
-
-      // Check if the same item already exists in destination warehouse
-      const destItem = await db.query.item.findFirst({
-        columns: { id: true, quantity: true },
-        where: (fields, { and, eq: fieldEq }) =>
-          and(
-            fieldEq(fields.code, sourceItem.code),
-            fieldEq(fields.warehouseId, destWarehouseId)
-          ),
-      });
-
-      if (destItem) {
-        // Update existing destination item
-        const newDestQty = destItem.quantity + quantity;
-        let destStatus = "AMAN";
-        if (newDestQty <= 20) destStatus = "KRITIS";
-        else if (newDestQty <= 50) destStatus = "MENIPIS";
-
-        await db
+    const newTransfer = await db.transaction(async (tx) => {
+      if (newSourceQty <= 0) {
+        // All stock is being moved — just change the item's warehouse
+        await tx
           .update(item)
           .set({
-            quantity: newDestQty,
-            status: destStatus,
+            warehouseId: destWarehouseId,
+            quantity: quantity,
+            status: calculateStockStatus(quantity),
             updatedAt: new Date(),
           })
-          .where(eq(item.id, destItem.id));
+          .where(and(eq(item.id, itemId), eq(item.createdById, req.user!.id)));
       } else {
-        // Create new item record in destination — use a unique code suffix
+        // Partial transfer — reduce source quantity
+        await tx
+          .update(item)
+          .set({
+            quantity: newSourceQty,
+            status: sourceStatus,
+            updatedAt: new Date(),
+          })
+          .where(and(eq(item.id, itemId), eq(item.createdById, req.user!.id)));
+
+        // Check if destination warehouse already has this item for this user
         const destCode = `${sourceItem.code}-W${destWarehouseId}`;
-        await db
-          .insert(item)
-          .values({
-            code: destCode,
-            name: sourceItem.name,
-            categoryId: sourceItem.categoryId,
-            itemTypeId: sourceItem.itemTypeId,
-            materialType: sourceItem.materialType,
-            size: sourceItem.size,
-            quantity: quantity,
-            warehouseId: destWarehouseId,
-            notes: sourceItem.notes,
-            status: quantity <= 20 ? "KRITIS" : quantity <= 50 ? "MENIPIS" : "AMAN",
-            createdById: req.user!.id,
-            entryDate: new Date(),
+        const destItem = await tx.query.item.findFirst({
+          columns: { id: true, quantity: true },
+          where: (fields, { and: fAnd, or: fOr, eq: fieldEq }) =>
+            fAnd(
+              fOr(
+                fieldEq(fields.code, sourceItem.code),
+                fieldEq(fields.code, destCode)
+              ),
+              fieldEq(fields.warehouseId, destWarehouseId),
+              fieldEq(fields.createdById, req.user!.id)
+            ),
+        });
+
+        if (destItem) {
+          // Update existing destination item
+          const newDestQty = destItem.quantity + quantity;
+          await tx
+            .update(item)
+            .set({
+              quantity: newDestQty,
+              status: calculateStockStatus(newDestQty),
+              updatedAt: new Date(),
+            })
+            .where(and(eq(item.id, destItem.id), eq(item.createdById, req.user!.id)));
+        } else {
+          // Create new item record in destination — ensure unique code
+          let finalDestCode = destCode;
+          const codeCollision = await tx.query.item.findFirst({
+            columns: { id: true },
+            where: eq(item.code, finalDestCode),
           });
+          if (codeCollision) {
+            finalDestCode = `${destCode}-${Date.now().toString(36).slice(-4)}`;
+          }
+
+          await tx
+            .insert(item)
+            .values({
+              code: finalDestCode,
+              name: sourceItem.name,
+              categoryId: sourceItem.categoryId,
+              itemTypeId: sourceItem.itemTypeId,
+              materialType: sourceItem.materialType,
+              size: sourceItem.size,
+              quantity: quantity,
+              warehouseId: destWarehouseId,
+              notes: sourceItem.notes,
+              status: calculateStockStatus(quantity),
+              createdById: req.user!.id,
+              entryDate: new Date(),
+            });
+        }
       }
-    }
 
-    // 2. Create transfer record
-    const [newTransfer] = await db
-      .insert(transfer)
-      .values({
+      // Create transfer record
+      const [insertedTransfer] = await tx
+        .insert(transfer)
+        .values({
+          itemId,
+          sourceWarehouseId,
+          destWarehouseId,
+          quantity,
+          status: "SUKSES",
+          createdById: req.user!.id,
+        })
+        .returning();
+
+      // Log activity
+      await tx.insert(activityLog).values({
+        type: "PINDAH",
         itemId,
-        sourceWarehouseId,
-        destWarehouseId,
+        warehouseId: destWarehouseId,
+        transferId: insertedTransfer.id,
         quantity,
-        status: "SUKSES",
         createdById: req.user!.id,
-      })
-      .returning();
+      });
 
-    // 3. Log activity
-    await db.insert(activityLog).values({
-      type: "PINDAH",
-      itemId,
-      warehouseId: destWarehouseId,
-      transferId: newTransfer.id,
-      quantity,
-      createdById: req.user!.id,
+      return insertedTransfer;
     });
 
     res.status(201).json({
       message: "Transfer berhasil diproses",
       transfer: newTransfer,
     });
-  } catch (error) {
+  } catch (error: any) {
     console.error("Transfer error:", error);
-    res.status(500).json({ error: "Gagal memproses perpindahan barang" });
+    res.status(500).json({
+      message: error?.message || "Gagal memproses perpindahan barang",
+      error: error?.message || "Gagal memproses perpindahan barang",
+    });
   }
 });
 

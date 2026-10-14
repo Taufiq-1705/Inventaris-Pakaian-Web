@@ -1,13 +1,20 @@
 import rateLimit from "express-rate-limit";
 
+const isDev = process.env.NODE_ENV !== "production";
+
 /**
  * Brute-force protection for credential endpoints.
- * 10 attempts per 15 minutes per IP (sign-in & sign-up).
+ * In dev: 100 attempts per 15 minutes to allow smooth testing.
+ * In prod: 10 attempts per 15 minutes per IP (sign-in & sign-up).
  */
 export const authRateLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  limit: 10,
+  limit: isDev ? 100 : 10,
   standardHeaders: "draft-7",
   legacyHeaders: false,
-  message: { error: "Terlalu banyak percobaan. Silakan coba lagi dalam 15 menit." },
+  message: {
+    message: "Terlalu banyak percobaan. Silakan coba lagi dalam 15 menit.",
+    error: "Terlalu banyak percobaan. Silakan coba lagi dalam 15 menit.",
+  },
 });
+
