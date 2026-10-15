@@ -1,0 +1,140 @@
+### ==============================================================================
+### Black Box API Testing (REST Client)
+### Project: Inventaris Pakaian Web Monorepo (apps/backend)
+### Focus: Input Validation, Contract Guards, 400 Bad Request vs 500 Server Error
+### ==============================================================================
+
+@baseUrl = http://localhost:3001/api
+@testUserId = user-tester-uuid
+
+### ------------------------------------------------------------------------------
+### 1. Health Check Endpoint
+### Expected: 200 OK
+### ------------------------------------------------------------------------------
+# @name healthCheck
+GET {{baseUrl}}/health
+Accept: application/json
+
+### ------------------------------------------------------------------------------
+### 2. Unauthorized Access: Outgoing Transaction
+### Expected: 401 Unauthorized (Security boundary verification)
+### ------------------------------------------------------------------------------
+# @name unauthorizedOutgoing
+POST {{baseUrl}}/outgoing
+Content-Type: application/json
+
+{
+  "items": [
+    { "itemId": 1, "quantity": 10 }
+  ]
+}
+
+### ------------------------------------------------------------------------------
+### 3. Invalid Data Type: String instead of Integer for Quantity
+### Expected: 400 Bad Request (Must NOT crash with 500 Internal Server Error)
+### ------------------------------------------------------------------------------
+# @name invalidTypeQuantity
+POST {{baseUrl}}/outgoing
+Content-Type: application/json
+x-test-user: {{testUserId}}
+
+{
+  "items": [
+    { "itemId": 1, "quantity": "sepuluh_pcs_invalid" }
+  ]
+}
+
+### ------------------------------------------------------------------------------
+### 4. Invalid Numerical Boundary: Negative Quantity
+### Expected: 400 Bad Request
+### ------------------------------------------------------------------------------
+# @name negativeQuantity
+POST {{baseUrl}}/outgoing
+Content-Type: application/json
+x-test-user: {{testUserId}}
+
+{
+  "items": [
+    { "itemId": 1, "quantity": -50 }
+  ]
+}
+
+### ------------------------------------------------------------------------------
+### 5. Invalid Numerical Boundary: Zero Quantity
+### Expected: 400 Bad Request
+### ------------------------------------------------------------------------------
+# @name zeroQuantity
+POST {{baseUrl}}/outgoing
+Content-Type: application/json
+x-test-user: {{testUserId}}
+
+{
+  "items": [
+    { "itemId": 1, "quantity": 0 }
+  ]
+}
+
+### ------------------------------------------------------------------------------
+### 6. Malformed Payload: Empty Items Array
+### Expected: 400 Bad Request ("Daftar barang tidak boleh kosong")
+### ------------------------------------------------------------------------------
+# @name emptyItemsArray
+POST {{baseUrl}}/outgoing
+Content-Type: application/json
+x-test-user: {{testUserId}}
+
+{
+  "items": []
+}
+
+### ------------------------------------------------------------------------------
+### 7. Missing Required Fields on Create Item
+### Expected: 400 Bad Request
+### ------------------------------------------------------------------------------
+# @name missingItemFields
+POST {{baseUrl}}/items
+Content-Type: application/json
+x-test-user: {{testUserId}}
+
+{}
+
+### ------------------------------------------------------------------------------
+### 8. Warehouse Transfer: Exceeding Destination Capacity (Boundary)
+### Expected: 400 Bad Request ("Kapasitas gudang tujuan tidak mencukupi")
+### ------------------------------------------------------------------------------
+# @name transferCapacityExceeded
+POST {{baseUrl}}/transfers
+Content-Type: application/json
+x-test-user: {{testUserId}}
+
+{
+  "itemId": 1,
+  "sourceWarehouseId": 1,
+  "destWarehouseId": 2,
+  "quantity": 999999
+}
+
+### ------------------------------------------------------------------------------
+### 9. Warehouse Transfer: Same Source and Destination Warehouse
+### Expected: 400 Bad Request ("Gudang asal dan tujuan tidak boleh sama")
+### ------------------------------------------------------------------------------
+# @name transferSameWarehouse
+POST {{baseUrl}}/transfers
+Content-Type: application/json
+x-test-user: {{testUserId}}
+
+{
+  "itemId": 1,
+  "sourceWarehouseId": 1,
+  "destWarehouseId": 1,
+  "quantity": 10
+}
+
+### ------------------------------------------------------------------------------
+### 10. Dashboard Stats (Aggregated KPI)
+### Expected: 200 OK with totalItems, totalStock, and warehouses array
+### ------------------------------------------------------------------------------
+# @name getDashboardStats
+GET {{baseUrl}}/dashboard/stats
+Accept: application/json
+x-test-user: {{testUserId}}

@@ -1,0 +1,313 @@
+{
+  "info": {
+    "_postman_id": "a918e7e1-8f52-47b2-a429-inventaris-blackbox",
+    "name": "Inventaris Pakaian - Black Box API Tests",
+    "description": "Collection for Black Box API Testing on Inventaris Pakaian Backend endpoints. Validates input guards, boundary conditions, data types, and asserts 400 Bad Request responses instead of 500 server crashes.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:3001/api",
+      "type": "string"
+    },
+    {
+      "key": "testUserId",
+      "value": "user-tester-uuid",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "01. Health Check",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status code is 200 OK', function () {",
+              "    pm.response.to.have.status(200);",
+              "});",
+              "pm.test('Response is JSON and status ok', function () {",
+              "    var jsonData = pm.response.json();",
+              "    pm.expect(jsonData.status).to.eql('ok');",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [
+          { "key": "Accept", "value": "application/json" }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/health",
+          "host": ["{{baseUrl}}"],
+          "path": ["health"]
+        }
+      }
+    },
+    {
+      "name": "02. Outgoing - Unauthorized Guard (401)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Security boundary: Status code is 401 Unauthorized', function () {",
+              "    pm.response.to.have.status(401);",
+              "});",
+              "pm.test('Server does not crash with 500', function () {",
+              "    pm.expect(pm.response.code).to.not.equal(500);",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": JSON.stringify({
+            "items": [{ "itemId": 1, "quantity": 10 }]
+          }, null, 2)
+        },
+        "url": {
+          "raw": "{{baseUrl}}/outgoing",
+          "host": ["{{baseUrl}}"],
+          "path": ["outgoing"]
+        }
+      }
+    },
+    {
+      "name": "03. Outgoing - Invalid Data Type (String Quantity)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status code is 400 Bad Request', function () {",
+              "    pm.response.to.have.status(400);",
+              "});",
+              "pm.test('Server does NOT crash with 500', function () {",
+              "    pm.expect(pm.response.code).to.not.equal(500);",
+              "});",
+              "pm.test('Error message is informative', function () {",
+              "    var jsonData = pm.response.json();",
+              "    pm.expect(jsonData.error).to.be.a('string');",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "x-test-user", "value": "{{testUserId}}" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": JSON.stringify({
+            "items": [{ "itemId": 1, "quantity": "sepuluh_invalid_string" }]
+          }, null, 2)
+        },
+        "url": {
+          "raw": "{{baseUrl}}/outgoing",
+          "host": ["{{baseUrl}}"],
+          "path": ["outgoing"]
+        }
+      }
+    },
+    {
+      "name": "04. Outgoing - Negative Quantity (-50)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status code is 400 Bad Request', function () {",
+              "    pm.response.to.have.status(400);",
+              "});",
+              "pm.test('Error response mentions valid quantity required', function () {",
+              "    var jsonData = pm.response.json();",
+              "    pm.expect(jsonData.error).to.include('jumlah yang valid');",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "x-test-user", "value": "{{testUserId}}" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": JSON.stringify({
+            "items": [{ "itemId": 1, "quantity": -50 }]
+          }, null, 2)
+        },
+        "url": {
+          "raw": "{{baseUrl}}/outgoing",
+          "host": ["{{baseUrl}}"],
+          "path": ["outgoing"]
+        }
+      }
+    },
+    {
+      "name": "05. Outgoing - Zero Quantity (0)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status code is 400 Bad Request', function () {",
+              "    pm.response.to.have.status(400);",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "x-test-user", "value": "{{testUserId}}" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": JSON.stringify({
+            "items": [{ "itemId": 1, "quantity": 0 }]
+          }, null, 2)
+        },
+        "url": {
+          "raw": "{{baseUrl}}/outgoing",
+          "host": ["{{baseUrl}}"],
+          "path": ["outgoing"]
+        }
+      }
+    },
+    {
+      "name": "06. Outgoing - Empty Items Array",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status code is 400 Bad Request', function () {",
+              "    pm.response.to.have.status(400);",
+              "});",
+              "pm.test('Error message matches specification', function () {",
+              "    var jsonData = pm.response.json();",
+              "    pm.expect(jsonData.error).to.include('tidak boleh kosong');",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "x-test-user", "value": "{{testUserId}}" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": JSON.stringify({
+            "items": []
+          }, null, 2)
+        },
+        "url": {
+          "raw": "{{baseUrl}}/outgoing",
+          "host": ["{{baseUrl}}"],
+          "path": ["outgoing"]
+        }
+      }
+    },
+    {
+      "name": "07. Items - Missing Required Fields",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status code is 400 Bad Request', function () {",
+              "    pm.response.to.have.status(400);",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "x-test-user", "value": "{{testUserId}}" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/items",
+          "host": ["{{baseUrl}}"],
+          "path": ["items"]
+        }
+      }
+    },
+    {
+      "name": "08. Transfers - Destination Capacity Exceeded",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status code is 400 Bad Request', function () {",
+              "    pm.response.to.have.status(400);",
+              "});",
+              "pm.test('Error response mentions capacity limit', function () {",
+              "    var jsonData = pm.response.json();",
+              "    pm.expect(jsonData.error || jsonData.message).to.include('Kapasitas gudang tujuan tidak mencukupi');",
+              "});"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "x-test-user", "value": "{{testUserId}}" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": JSON.stringify({
+            "itemId": 1,
+            "sourceWarehouseId": 1,
+            "destWarehouseId": 2,
+            "quantity": 999999
+          }, null, 2)
+        },
+        "url": {
+          "raw": "{{baseUrl}}/transfers",
+          "host": ["{{baseUrl}}"],
+          "path": ["transfers"]
+        }
+      }
+    }
+  ]
+}

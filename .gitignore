@@ -41,6 +41,8 @@ secrets/
 
 # Test coverage
 coverage/
+playwright-report/
+test-results/
 
 # Build outputs
 dist/

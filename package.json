@@ -11,7 +11,8 @@
     "db:seed": "npm run db:seed --workspace=apps/backend",
     "db:studio": "npm run db:studio --workspace=apps/backend",
     "test": "npm run test --workspace=apps/backend",
-    "test:coverage": "npm run test:coverage --workspace=apps/backend"
+    "test:coverage": "npm run test:coverage --workspace=apps/backend",
+    "test:e2e": "npm run test:e2e --workspace=apps/frontend"
   },
   "keywords": [],
   "author": "",
