@@ -36,7 +36,7 @@ router.post("/", async (req, res) => {
     const { itemId, sourceWarehouseId, destWarehouseId, quantity } = req.body;
 
     // Basic validation
-    if (!itemId || !sourceWarehouseId || !destWarehouseId || !quantity) {
+    if (!itemId || !sourceWarehouseId || !destWarehouseId || quantity === undefined || quantity === null) {
       res.status(400).json({
         message: "Item, gudang asal, gudang tujuan, dan jumlah wajib diisi",
         error: "Item, gudang asal, gudang tujuan, dan jumlah wajib diisi",
