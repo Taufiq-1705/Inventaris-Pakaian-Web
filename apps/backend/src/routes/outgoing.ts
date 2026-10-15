@@ -47,6 +47,11 @@ router.get("/next-code", async (req, res) => {
   }
 });
 
+import {
+  executeOutgoingTransaction,
+  TransactionValidationError,
+} from "../lib/transactionService.js";
+
 /**
  * POST /api/outgoing
  * Creates a new outgoing transaction
@@ -54,123 +59,13 @@ router.get("/next-code", async (req, res) => {
 router.post("/", async (req, res) => {
   try {
     const userId = req.user!.id;
-    const { date, items: reqItems } = req.body;
-
-    if (!reqItems || !Array.isArray(reqItems) || reqItems.length === 0) {
-      res.status(400).json({ error: "Daftar barang tidak boleh kosong" });
+    const { transaction } = await executeOutgoingTransaction(db, userId, req.body);
+    res.status(201).json({ success: true, transaction });
+  } catch (error: any) {
+    if (error instanceof TransactionValidationError) {
+      res.status(error.statusCode).json({ error: error.message });
       return;
     }
-
-    // Validate date
-    const txDate = date ? new Date(date) : new Date();
-
-    // Verify all items belong to user and have enough stock
-    for (const reqItem of reqItems) {
-      const { itemId, quantity } = reqItem;
-      if (!itemId || !quantity || quantity <= 0) {
-        res.status(400).json({ error: "ID barang dan jumlah yang valid wajib diisi" });
-        return;
-      }
-
-      const dbItem = await db.query.item.findFirst({
-        where: and(eq(item.id, itemId), eq(item.createdById, userId)),
-      });
-
-      if (!dbItem) {
-        res.status(404).json({ error: `Barang dengan ID ${itemId} tidak ditemukan` });
-        return;
-      }
-
-      if (dbItem.quantity < quantity) {
-        res.status(400).json({
-          error: `Stok untuk "${dbItem.name}" tidak mencukupi. Tersedia: ${dbItem.quantity} Pcs, diminta: ${quantity} Pcs.`,
-        });
-        return;
-      }
-    }
-
-    // Process transaction
-    const result = await db.transaction(async (tx) => {
-      // 1. Generate code
-      const latestTx = await tx
-        .select({ transactionCode: outgoingTransaction.transactionCode })
-        .from(outgoingTransaction)
-        .where(eq(outgoingTransaction.createdById, userId))
-        .orderBy(desc(outgoingTransaction.id))
-        .limit(1);
-
-      let nextNum = 1;
-      if (latestTx.length > 0 && latestTx[0].transactionCode) {
-        const match = latestTx[0].transactionCode.match(/KB-(\d+)/);
-        if (match) {
-          nextNum = parseInt(match[1]) + 1;
-        }
-      }
-      const transactionCode = `KB-${String(nextNum).padStart(5, "0")}`;
-
-      // 2. Insert outgoing transaction header
-      const [newTx] = await tx
-        .insert(outgoingTransaction)
-        .values({
-          transactionCode,
-          date: txDate,
-          createdById: userId,
-        })
-        .returning();
-
-      // 3. Process each item
-      for (const reqItem of reqItems) {
-        const { itemId, quantity } = reqItem;
-
-        // Fetch current item state in transaction
-        const dbItem = await tx.query.item.findFirst({
-          where: eq(item.id, itemId),
-        });
-        if (!dbItem) throw new Error("Barang tidak ditemukan di tengah transaksi");
-
-        const nextQty = dbItem.quantity - quantity;
-
-        // Determine status
-        let status = "AMAN";
-        if (nextQty <= 0) status = "KRITIS";
-        else if (nextQty <= 20) status = "KRITIS";
-        else if (nextQty <= 50) status = "MENIPIS";
-
-        // Insert outgoing item detail
-        await tx.insert(outgoingTransactionItem).values({
-          transactionId: newTx.id,
-          itemId,
-          quantity,
-          unit: "Pcs",
-        });
-
-        // Update item quantity
-        await tx
-          .update(item)
-          .set({
-            quantity: nextQty,
-            status,
-            updatedAt: new Date(),
-          })
-          .where(eq(item.id, itemId));
-
-        // Insert activity log
-        await tx.insert(activityLog).values({
-          type: "KELUAR",
-          itemId,
-          warehouseId: dbItem.warehouseId,
-          outgoingTransactionId: newTx.id,
-          quantity,
-          createdById: userId,
-          createdAt: txDate,
-        });
-      }
-
-      return newTx;
-    });
-
-    res.status(201).json({ success: true, transaction: result });
-  } catch (error: any) {
     console.error("Create outgoing transaction error:", error);
     res.status(500).json({ error: error.message || "Gagal menyimpan transaksi keluar" });
   }

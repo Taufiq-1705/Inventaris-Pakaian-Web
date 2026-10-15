@@ -60,17 +60,23 @@ app.use("/api", notFoundHandler);
 app.use(errorHandler);
 
 // --- Start Server -------------------------------------------------------
-app.listen(PORT, () => {
-  console.log(`\nBackend server running at http://localhost:${PORT}`);
-  console.log(`API routes:`);
-  console.log(`   Auth:       http://localhost:${PORT}/api/auth/*`);
-  console.log(`   Dashboard:  http://localhost:${PORT}/api/dashboard/*`);
-  console.log(`   Items:      http://localhost:${PORT}/api/items`);
-  console.log(`   Warehouses: http://localhost:${PORT}/api/warehouses`);
-  console.log(`   Transfers:  http://localhost:${PORT}/api/transfers`);
-  console.log(`   Outgoing:   http://localhost:${PORT}/api/outgoing`);
-  console.log(`   Profile:    http://localhost:${PORT}/api/profile`);
-  console.log(`   Categories: http://localhost:${PORT}/api/categories`);
-  console.log(`   Health:     http://localhost:${PORT}/api/health`);
-  console.log(`\n`);
-});
+if (process.env.NODE_ENV !== "test") {
+  app.listen(PORT, () => {
+    console.log(`\nBackend server running at http://localhost:${PORT}`);
+    console.log(`API routes:`);
+    console.log(`   Auth:       http://localhost:${PORT}/api/auth/*`);
+    console.log(`   Dashboard:  http://localhost:${PORT}/api/dashboard/*`);
+    console.log(`   Items:      http://localhost:${PORT}/api/items`);
+    console.log(`   Warehouses: http://localhost:${PORT}/api/warehouses`);
+    console.log(`   Transfers:  http://localhost:${PORT}/api/transfers`);
+    console.log(`   Outgoing:   http://localhost:${PORT}/api/outgoing`);
+    console.log(`   Profile:    http://localhost:${PORT}/api/profile`);
+    console.log(`   Categories: http://localhost:${PORT}/api/categories`);
+    console.log(`   Health:     http://localhost:${PORT}/api/health`);
+    console.log(`\n`);
+  });
+}
+
+export { app };
+export default app;
+

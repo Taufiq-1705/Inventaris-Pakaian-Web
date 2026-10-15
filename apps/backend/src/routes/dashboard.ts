@@ -31,34 +31,47 @@ router.get("/stats", async (req, res) => {
       .where(eq(item.createdById, userId));
     const totalStock = Number(totalStockResult[0]?.total ?? 0);
 
-    // Per-warehouse stats
-    const warehouses = await db.select().from(warehouse);
-    const warehouseStats = await Promise.all(
-      warehouses.map(async (w) => {
-        const stockResult = await db
-          .select({
-            currentStock: sql<number>`coalesce(sum(${item.quantity}), 0)`,
-          })
-          .from(item)
-          .where(and(eq(item.warehouseId, w.id), eq(item.createdById, userId)));
-
-        const currentStock = Number(stockResult[0]?.currentStock ?? 0);
-        const percentage =
-          w.maxCapacity > 0
-            ? Math.round((currentStock / w.maxCapacity) * 100)
-            : 0;
-
-        return {
-          id: w.id,
-          name: w.name,
-          description: w.description,
-          locationLabel: w.locationLabel,
-          maxCapacity: w.maxCapacity,
-          currentStock,
-          percentage,
-        };
+    // Per-warehouse stats — Single-Trip Relational Aggregation (LEFT JOIN + GROUP BY)
+    const warehouseAggResult = await db
+      .select({
+        id: warehouse.id,
+        name: warehouse.name,
+        description: warehouse.description,
+        locationLabel: warehouse.locationLabel,
+        maxCapacity: warehouse.maxCapacity,
+        currentStock: sql<number>`coalesce(sum(${item.quantity}), 0)::integer`,
       })
-    );
+      .from(warehouse)
+      .leftJoin(
+        item,
+        and(eq(item.warehouseId, warehouse.id), eq(item.createdById, userId))
+      )
+      .groupBy(
+        warehouse.id,
+        warehouse.name,
+        warehouse.description,
+        warehouse.locationLabel,
+        warehouse.maxCapacity
+      )
+      .orderBy(warehouse.id);
+
+    const warehouseStats = warehouseAggResult.map((w) => {
+      const currentStock = Number(w.currentStock ?? 0);
+      const percentage =
+        w.maxCapacity > 0
+          ? Math.round((currentStock / w.maxCapacity) * 100)
+          : 0;
+
+      return {
+        id: w.id,
+        name: w.name,
+        description: w.description,
+        locationLabel: w.locationLabel,
+        maxCapacity: w.maxCapacity,
+        currentStock,
+        percentage,
+      };
+    });
 
     res.json({
       totalItems,

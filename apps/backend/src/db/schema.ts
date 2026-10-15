@@ -7,8 +7,16 @@ import {
   serial,
   unique,
   index,
+  pgSequence,
 } from "drizzle-orm/pg-core";
 import { relations } from "drizzle-orm";
+
+// Sequence for thread-safe sequential transaction codes (KB-XXXXX)
+export const outgoingTxSeq = pgSequence("outgoing_tx_seq", {
+  startWith: 1,
+  increment: 1,
+});
+
 
 // ============================================================
 // Better Auth Tables (user, session, account)
@@ -133,6 +141,9 @@ export const item = pgTable("item", {
   nameIdx: index("item_name_idx").on(table.name),
   warehouseIdx: index("item_warehouse_id_idx").on(table.warehouseId),
   createdByIdx: index("item_created_by_id_idx").on(table.createdById),
+  userWarehouseIdx: index("item_user_warehouse_idx").on(table.createdById, table.warehouseId),
+  userStatusIdx: index("item_user_status_idx").on(table.createdById, table.status),
+  userCreatedAtIdx: index("item_user_created_at_idx").on(table.createdById, table.createdAt),
 }));
 
 // --- Transfer ---
@@ -151,7 +162,10 @@ export const transfer = pgTable("transfer", {
   status: text("status").notNull().default("PENDING"), // PENDING | SUKSES | GAGAL
   createdById: text("created_by_id").references(() => user.id),
   createdAt: timestamp("created_at").notNull().defaultNow(),
-});
+}, (table) => ({
+  userCreatedAtIdx: index("transfer_user_created_idx").on(table.createdById, table.createdAt),
+  itemIdIdx: index("transfer_item_id_idx").on(table.itemId),
+}));
 
 // --- Outgoing Transaction ---
 export const outgoingTransaction = pgTable("outgoing_transaction", {
@@ -164,6 +178,7 @@ export const outgoingTransaction = pgTable("outgoing_transaction", {
   createdAt: timestamp("created_at").notNull().defaultNow(),
 }, (table) => ({
   transactionUserUnique: unique("transaction_user_unique").on(table.transactionCode, table.createdById),
+  userCreatedAtIdx: index("outgoing_tx_user_created_idx").on(table.createdById, table.createdAt),
 }));
 
 // --- Outgoing Transaction Item ---
@@ -177,7 +192,10 @@ export const outgoingTransactionItem = pgTable("outgoing_transaction_item", {
     .references(() => item.id),
   quantity: integer("quantity").notNull(),   // Jumlah yang dikeluarkan
   unit: text("unit").notNull().default("Pcs"),
-});
+}, (table) => ({
+  txItemIdx: index("outgoing_item_tx_idx").on(table.transactionId),
+  itemIdIdx: index("outgoing_item_id_idx").on(table.itemId),
+}));
 
 // --- Activity Log ---
 export const activityLog = pgTable("activity_log", {
@@ -192,7 +210,11 @@ export const activityLog = pgTable("activity_log", {
   quantity: integer("quantity").notNull(),
   createdById: text("created_by_id").references(() => user.id),
   createdAt: timestamp("created_at").notNull().defaultNow(),
-});
+}, (table) => ({
+  userCreatedAtIdx: index("activity_log_user_created_idx").on(table.createdById, table.createdAt),
+  itemIdIdx: index("activity_log_item_id_idx").on(table.itemId),
+  typeIdx: index("activity_log_type_idx").on(table.type),
+}));
 
 // ============================================================
 // Relations (for Drizzle relational queries)

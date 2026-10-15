@@ -7,7 +7,11 @@ export default defineConfig({
     coverage: {
       provider: "v8",
       reporter: ["text", "json", "html"],
-      include: ["src/lib/businessRules.ts"],
+      include: [
+        "src/lib/businessRules.ts",
+        "src/lib/transactionService.ts",
+        "src/routes/outgoing.ts",
+      ],
     },
   },
 });
