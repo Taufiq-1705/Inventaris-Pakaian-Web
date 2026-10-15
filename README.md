@@ -16,20 +16,31 @@ InventariPakaianV2/
 │   ├── backend/             # REST API Server & Database Layer
 │   │   ├── src/
 │   │   │   ├── db/          # Schema Drizzle, koneksi DB, dan database seeder
-│   │   │   ├── lib/         # Konfigurasi Better Auth server
+│   │   │   ├── lib/         # Better Auth, env validation, business rules & transactionService
 │   │   │   ├── middleware/  # Middleware autentikasi (requireAuth)
 │   │   │   └── routes/      # Controller & endpoint REST API
+│   │   ├── tests/           # Unit, Integration, & Black-Box API test suites
+│   │   │   ├── business-rules.test.ts
+│   │   │   ├── inventory.test.ts
+│   │   │   ├── transaction.test.ts
+│   │   │   ├── api.test.ts
+│   │   │   ├── blackbox-api.http
+│   │   │   └── postman_collection.json
 │   │   ├── drizzle.config.ts# Konfigurasi Drizzle Kit
+│   │   ├── vitest.config.ts # Konfigurasi Vitest & V8 coverage engine
 │   │   ├── package.json     # Dependensi backend
 │   │   └── tsconfig.json
 │   │
 │   └── frontend/            # Client Application SPA (Single Page App)
+│       ├── e2e/             # Automated Black-Box UI Tests (Playwright)
+│       │   └── dashboard.spec.ts
 │       ├── src/
 │       │   ├── components/  # Komponen UI modular (Navbar, Sidebar, Modal, dll)
 │       │   ├── lib/         # Client Better Auth & wrapper API fetch
 │       │   ├── pages/       # Halaman aplikasi (Dashboard, Monitoring, Mutasi, dll)
 │       │   ├── App.tsx      # Routing & route guards
 │       │   └── index.css    # Desain sistem & Tailwind CSS v4 styling
+│       ├── playwright.config.ts # Konfigurasi Playwright E2E browser testing
 │       ├── package.json     # Dependensi frontend
 │       └── vite.config.ts   # Konfigurasi bundler Vite
 │
@@ -44,8 +55,8 @@ InventariPakaianV2/
 
 ### Keuntungan Struktur Ini:
 1. **Isolated Dependencies**: Frontend dan backend memiliki `package.json` terisolasi sehingga dependensi server tidak menggelembungkan bundle client.
-2. **Unified Command**: Perintah instalasi, migrasi database, dan eksekusi server dapat dipicu dari direktori root.
-3. **Clean Boundaries**: Pemisahan yang tegas antara layer presentasi (React 19) dan layer persistensi data (Express v5 & Drizzle ORM).
+2. **Unified Command**: Perintah instalasi, migrasi database, eksekusi server, dan pengujian otomatis dapat dipicu dari direktori root.
+3. **Clean Boundaries**: Pemisahan yang tegas antara layer presentasi (React 19), layer persistensi data (Express v5 & Drizzle ORM), dan layer pengujian (Vitest & Playwright).
 
 ---
 
@@ -62,6 +73,9 @@ InventariPakaianV2/
 | **ORM & Migrations** | [Drizzle ORM](https://orm.drizzle.team/) & [Drizzle Kit](https://orm.drizzle.team/kit-docs/overview) | TypeScript ORM dengan zero-overhead dan SQL dialect native |
 | **Authentication Engine** | [Better Auth](https://www.better-auth.com/) | Solusi autentikasi modern berbasis session, secure cookie, dan Drizzle adapter |
 | **Visualisasi Data** | [Chart.js](https://www.chartjs.org/) & [React-Chartjs-2](https://react-chartjs-2.js.org/) | Grafik interaktif tren arus barang masuk dan keluar |
+| **Unit & Integration Testing** | [Vitest](https://vitest.dev/) & [Supertest](https://github.com/ladjs/supertest) | Framework testing cepat dengan V8 Coverage engine bawaan |
+| **E2E Automation Testing** | [Playwright](https://playwright.dev/) | UI automated testing berbasis Chromium dengan auto-boot web server |
+| **API Black Box Testing** | REST Client (`.http`) & [Postman](https://www.postman.com/) | Koleksi pengujian kontrak API eksternal dan validasi HTTP 400 |
 
 ---
 
@@ -196,6 +210,9 @@ Buka peramban Anda di [http://localhost:5173](http://localhost:5173) untuk menga
 | `npm run dev` | Root | Menjalankan backend + frontend sekaligus (`concurrently`) |
 | `npm run dev:frontend` | Root | Menjalankan Vite dev server untuk frontend (`:5173`) |
 | `npm run dev:backend` | Root | Menjalankan Express dev server dengan `tsx watch` (`:3001`) |
+| `npm test` | Root / Backend | Menjalankan seluruh pengujian unit & integrasi backend via **Vitest** (59 passing tests) |
+| `npm run test:coverage` | Root / Backend | Menjalankan audit cakupan kode dengan **V8 Coverage Engine** |
+| `npm run test:e2e` | Root / Frontend | Menjalankan pengujian otomatis antarmuka pengguna berbasis **Playwright** (Chromium) |
 | `npm run db:push` | Root | Melakukan sinkronisasi skema Drizzle ORM langsung ke database |
 | `npm run db:seed` | Root | Menjalankan skrip seeder untuk mengisi data master & simulasi |
 | `npm run db:studio` | Root | Membuka Drizzle Studio (Database GUI Visualizer di browser) |
@@ -232,20 +249,23 @@ Kebijakan lengkap & checklist sebelum push: 👉 **[`docs/SECURITY.md`](docs/SEC
 
 Berdasarkan audit teknis arsitektur sistem terkini, berikut adalah beberapa area dan fitur yang masih dalam tahap pengembangan lanjutan (*pending*):
 
-1. **Manajemen Sesi Perangkat Aktif (`PengaturanPage`)**:
-   - Tampilan daftar perangkat login ("MacBook Air M1", "iPhone 13", dll.) saat ini masih berupa data mock statis di antarmuka. Integrasi dengan tabel `session` di database Better Auth dan fitur revokasi sesi perangkat individual sedang disiapkan.
-2. **Penyimpanan Berkas Foto Profil (`ProfilPage`)**:
+1. **Penyimpanan Berkas Foto Profil (`ProfilPage`)**:
    - Tombol "Ubah Foto" belum terhubung dengan penyimpanan berkas fisik (*cloud object storage* seperti S3/GCS atau upload lokal). Avatar saat ini masih menggunakan URL placeholder statis.
-3. **Persistensi Preferensi Notifikasi**:
+2. **Persistensi Preferensi Notifikasi**:
    - Pengaturan *toggle* notifikasi Push dan Email pada halaman Pengaturan baru beroperasi di *state* lokal React dan belum dipersistensikan ke tabel profil basis data.
-4. **Modul Ekspor & Pelaporan**:
+3. **Modul Ekspor & Pelaporan**:
    - Metrik statistik `totalReports` masih bernilai `0` (placeholder) karena fitur *export* laporan inventaris berkala (format PDF/Excel) masih dalam antrean pengembangan (*roadmap*).
-5. **Strategi Penghapusan Data Inventaris (*Soft Delete*)**:
-   - Penghapusan barang yang pernah tercatat dalam transaksi keluar (`outgoing_transaction_item`) memerlukan penerapan *soft-delete* (`is_deleted`) untuk menghindari pelanggaran batasan relasi *foreign key* PostgreSQL.
-6. **Roadmap Arsitektur** (dari laporan analisis kode):
-   - Memisahkan logika bisnis ke layer `services/`, shared types package frontend–backend, `@tanstack/react-query`, automated tests (Vitest), dan code-splitting bundle frontend.
+4. **Strategi Penghapusan Data Inventaris (*Soft Delete*)**:
+   - Penghapusan barang yang pernah tercatat dalam transaksi keluar (`outgoing_transaction_item`) memerlukan penerapan *soft-delete* (`deleted_at`) untuk menghindari pelanggaran batasan relasi *foreign key* PostgreSQL.
+5. **Shared Types Package & Query Cache**:
+   - Memindahkan types Drizzle ke workspace shared package `@garmentflow/types` dan integrasi `@tanstack/react-query` untuk caching client.
 
-> ✅ **Sudah diselesaikan:** base URL frontend kini memakai `VITE_API_URL`; global error handler, React Error Boundary, rate limiting, helmet, validasi env, dan index database telah ditambahkan.
+> ✅ **Sudah diselesaikan:**
+> - **Infrastruktur Testing Lengkap:** White-Box Testing dengan Vitest (59 test pass, coverage > 91%) dan Black-Box UI Testing dengan Playwright E2E (5 test pass, 100% pass rate).
+> - **Service Layer & ACID Guarantees:** Pemisahan mutasi transaksi keluar ke `src/lib/transactionService.ts` dengan penanganan atomic commit & rollback.
+> - **Optimasi Algoritma Kueri:** Eliminasi N+1 query melalui batching `inArray`, atomic PostgreSQL sequence (`outgoing_tx_seq`), composite indexing, dan single-trip dashboard aggregation (`LEFT JOIN + GROUP BY`).
+> - **Keamanan & Runtime:** Base URL frontend dinamis (`VITE_API_URL`), global error handler, React Error Boundary, rate limiting, helmet, dan validasi env strict.
+
 
 ---
 

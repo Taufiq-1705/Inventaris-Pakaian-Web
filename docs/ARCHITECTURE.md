@@ -31,11 +31,17 @@ graph TD
             ProfileController["Profile Controller (/api/profile)"]
             CategoriesController["Categories Controller (/api/categories)"]
         end
+
+        subgraph ServiceLayer["Business Logic & Domain Services"]
+            TransactionService["Transaction Service (transactionService.ts)"]
+            BusinessRules["Business Rules (businessRules.ts)"]
+        end
     end
 
     subgraph DataLayer["Persistence Layer (PostgreSQL)"]
         Drizzle["Drizzle ORM Engine"]
         PG[("PostgreSQL Database")]
+        Sequence[("outgoing_tx_seq Sequence")]
     end
 
     UI --> AuthClient
@@ -45,9 +51,13 @@ graph TD
     CorsMW --> AuthRouter
     CorsMW --> RequireAuth
     RequireAuth --> BusinessControllers
+    OutgoingController --> TransactionService
+    TransactionService --> BusinessRules
+    TransactionService --> Drizzle
     AuthRouter --> Drizzle
     BusinessControllers --> Drizzle
     Drizzle --> PG
+    Drizzle --> Sequence
 ```
 
 ### Karakteristik Kunci Desain:
@@ -222,6 +232,15 @@ erDiagram
   - `MASUK`: Terpicu saat pembuatan barang baru atau penyesuaian stok positif.
   - `KELUAR`: Terpicu saat transaksi pengeluaran barang (`outgoing_transaction`) atau penyesuaian stok negatif.
   - `PINDAH`: Terpicu saat proses mutasi transfer antargudang berhasil diselesaikan.
+
+#### 4. PostgreSQL Sequence & Composite Indexes (Kinerja & Konkurensi)
+- **`outgoing_tx_seq`**: Native PostgreSQL sequence (`CREATE SEQUENCE outgoing_tx_seq START 1 INCREMENT 1`) untuk menjamin nomor urut transaksi `KB-XXXXX` dihasilkan secara atomik, unik, dan *thread-safe* di lingkungan multi-user konkuren.
+- **Indeks Pengoptimalan Kueri (Composite Indexes)**:
+  - `item_user_warehouse_idx` (`created_by_id`, `warehouse_id`): Mengoptimalkan kueri inventaris dan kalkulasi kapasitas per gudang.
+  - `item_user_status_idx` (`created_by_id`, `status`): Mempercepat filter status level stok (`AMAN`, `MENIPIS`, `KRITIS`).
+  - `item_user_created_at_idx` (`created_by_id`, `created_at`): Mempercepat pengurutan katalog barang terbaru.
+  - `activity_log_user_created_idx` (`created_by_id`, `created_at`): Mempercepat kueri riwayat aktivitas dan tren dasbor.
+  - `transfer_user_created_idx` (`created_by_id`, `created_at`): Mempercepat paginasi mutasi antar-gudang.
 
 ---
 
@@ -424,17 +443,35 @@ Sebagai bagian dari continuous improvement arsitektur sistem, audit berkala meme
 - Ditambahkan index `item_name_idx`, `item_warehouse_id_idx`, `item_created_by_id_idx`.
 - Skrip `db:seed` dan cascade delete profil telah diperbaiki untuk menangani `outgoing_transaction` dan `outgoing_transaction_item` secara aman tanpa pelanggaran *foreign key*.
 
-### 6.7 Automated Testing Suite — ✅ Selesai (Fase Awal)
-- Framework Vitest terpasang di `apps/backend` dengan script `npm run test`.
-- Modul `src/lib/businessRules.ts` dan test suite `tests/business-rules.test.ts` (13 tests) memverifikasi kalkulasi stok, aturan kapasitas gudang, kategori, dan serial penomoran transaksi keluar.
+### 6.7 Automated Testing Suite (White-Box & Black-Box) — ✅ Selesai Penuh
+Sistem memiliki infrastruktur pengujian otomatis ganda (*Dual Testing Infrastructure*) untuk menjamin keandalan logika internal dan antarmuka pengguna:
+1. **White-Box Unit & Integration Testing (Vitest + Supertest)**:
+   - Berkas: `apps/backend/tests/` (`business-rules.test.ts`, `inventory.test.ts`, `transaction.test.ts`, `api.test.ts`).
+   - Metrik: **59 tests lulus (100% Pass Rate)** dengan cakupan kode V8 > **91.66% Statement Coverage** dan **100%** pada modul kalkulasi bisnis & transaction service.
+   - Menguji atomisitas transaksi Drizzle ORM, mitigasi rollback, boundary value analysis, dan isolasi multi-tenant.
+2. **Black-Box End-to-End UI Testing (Playwright)**:
+   - Berkas: `apps/frontend/e2e/dashboard.spec.ts` dan `playwright.config.ts`.
+   - Menguji alur pengguna nyata (login, proteksi rute, dashboard rendering, dan modal penyesuaian stok) dengan browser Chromium *headless*.
+   - Metrik: **5 tests lulus (100% Pass Rate)**.
+3. **Black-Box API Testing Contracts**:
+   - Berkas: `apps/backend/tests/blackbox-api.http` (REST Client) dan `apps/backend/tests/postman_collection.json` (Postman v2.1.0).
+   - Memvalidasi bahwa seluruh masukan cacat (*string quantity*, nilai negatif, array kosong, dan mutasi overcapacity) ditolak dengan **`400 Bad Request`** dan tidak pernah memicu crash **`500 Internal Server Error`**.
 
-### 6.8 Roadmap Arsitektur Lanjutan
-| Prioritas | Item |
-| :--- | :--- |
-| P2 | Pisahkan logika bisnis route (`items.ts`, `outgoing.ts`) ke layer `services/` |
-| P2 | Shared types package (derive dari Drizzle schema) untuk frontend & backend |
-| P2 | Validasi input skema (`zod`) pada seluruh body request |
-| P3 | Menambah integration test HTTP untuk route transfer dan outgoing |
-| P3 | `@tanstack/react-query` untuk caching & deduplikasi fetch |
-| P3 | Code-splitting route frontend (bundle > 500 kB) |
-| P3 | Composite unique `item (code, created_by_id)` agar kode barang unik per user |
+### 6.8 Service Layer & Optimasi Algoritma Kueri — ✅ Selesai
+1. **Service Layer Abstraction (`src/lib/transactionService.ts`)**:
+   - Memisahkan logika transaksi keluar dari route controller Express, membungkus eksekusi mutasi multi-barang dalam satu unit atomik ACID dengan rollback otomatis saat terjadi kendala koneksi atau constraint database.
+2. **Eliminasi N+1 Query (Query Batching)**:
+   - Kueri validasi barang keluar diubah dari looping linear $O(4N)$ menjadi *single batch query* menggunakan operator `inArray` dan In-Memory Hashing Map ($O(1)$ lookup).
+   - Multi-row batch insert pada tabel `outgoing_transaction_item` dan `activity_log`.
+3. **Single-Trip Dashboard Relational Aggregation**:
+   - Kueri kapasitas multi-gudang di endpoint `GET /api/dashboard/stats` dioptimasi dari loop `Promise.all` ($3 + M$ kueri) menjadi 1 kueri agregasi tunggal relasional berbasis `LEFT JOIN` dan `GROUP BY`.
+
+### 6.9 Roadmap Arsitektur Lanjutan
+| Prioritas | Item | Keterangan |
+| :--- | :--- | :--- |
+| P2 | Shared types package (derive dari Drizzle schema) | Memindahkan tipe skema ke shared workspace `@garmentflow/types` |
+| P2 | Validasi input skema (`zod`) | Validasi runtime skema pada seluruh body request controller |
+| P3 | Integrasi `@tanstack/react-query` | Caching & deduplikasi fetch otomatis di sisi client React |
+| P3 | Code-splitting route frontend | Optimasi ukuran bundle SPA dengan dynamic `React.lazy()` |
+| P3 | Composite unique `item (code, created_by_id)` | Memastikan kode barang unik scoped per user di level DDL database |
+
