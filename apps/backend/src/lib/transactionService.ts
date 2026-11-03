@@ -28,15 +28,21 @@ export class TransactionValidationError extends Error {
   }
 }
 
+/** Pesan error stok tidak cukup â€” dipakai di pre-check maupun re-validasi di dalam transaksi. */
+function insufficientStockMessage(name: string, available: number, requested: number): string {
+  return `Stok untuk "${name}" tidak mencukupi. Tersedia: ${available} Pcs, diminta: ${requested} Pcs.`;
+}
+
 /**
  * Memproses transaksi keluar barang secara atomik (ACID):
  * 1. Validasi input awal (empty check, non-positive quantity)
- * 2. Bulk query items via inArray & Hash Map lookup O(1) untuk eliminasi N+1 query
- * 3. Eksekusi db.transaction:
- *    a. Generate nomor serial transaksi KB-XXXXX (Atomic sequence / fallback)
- *    b. Insert header outgoingTransaction
- *    c. Batch insert outgoingTransactionItem & activityLog
- *    d. Update stok & status barang
+ * 2. Konsolidasi baris dengan itemId yang sama (total kuantitas per barang)
+ * 3. Pre-check cepat di luar transaksi: bulk query via inArray + Hash Map O(1)
+ * 4. Eksekusi db.transaction:
+ *    a. Kunci baris barang (SELECT ... FOR UPDATE) & validasi ulang stok
+ *    b. Generate nomor serial transaksi KB-XXXXX (Atomic sequence / fallback)
+ *    c. Insert header outgoingTransaction
+ *    d. Batch insert outgoingTransactionItem, update stok, batch insert activityLog
  */
 export async function executeOutgoingTransaction(
   dbInstance: any,
@@ -57,8 +63,15 @@ export async function executeOutgoingTransaction(
     }
   }
 
-  // 2. Eliminasi N+1 Query: Bulk Fetch seluruh item terkait dalam 1 query
-  const itemIds = [...new Set(reqItems.map((i) => i.itemId))];
+  // 2. Konsolidasi: baris dengan itemId sama dijumlahkan agar stok divalidasi
+  //    terhadap TOTAL permintaan, bukan per baris (mencegah oversell).
+  const requested = new Map<number, number>();
+  for (const { itemId, quantity } of reqItems) {
+    requested.set(itemId, (requested.get(itemId) ?? 0) + quantity);
+  }
+  const itemIds = [...requested.keys()];
+
+  // 3. Pre-check cepat di luar transaksi (fail-fast tanpa membuka transaksi DB)
   let dbItems: any[] = [];
 
   if (typeof dbInstance.query?.item?.findMany === "function") {
@@ -78,9 +91,7 @@ export async function executeOutgoingTransaction(
   // Map untuk lookup O(1) di memori
   const itemMap = new Map<number, any>(dbItems.map((it: any) => [it.id, it]));
 
-  // Validasi ketersediaan dan kecukupan stok secara in-memory (O(N) CPU operations)
-  for (const reqItem of reqItems) {
-    const { itemId, quantity } = reqItem;
+  for (const [itemId, quantity] of requested) {
     const dbItem = itemMap.get(itemId);
 
     if (!dbItem) {
@@ -89,7 +100,7 @@ export async function executeOutgoingTransaction(
 
     if (dbItem.quantity < quantity) {
       throw new TransactionValidationError(
-        `Stok untuk "${dbItem.name}" tidak mencukupi. Tersedia: ${dbItem.quantity} Pcs, diminta: ${quantity} Pcs.`,
+        insufficientStockMessage(dbItem.name, dbItem.quantity, quantity),
         400
       );
     }
@@ -97,9 +108,43 @@ export async function executeOutgoingTransaction(
 
   const txDate = date ? new Date(date) : new Date();
 
-  // 3. Eksekusi transaksi atomik (ACID)
+  // 4. Eksekusi transaksi atomik (ACID)
   return await dbInstance.transaction(async (tx: any) => {
-    // a. Penomoran serial kode transaksi thread-safe
+    // a. Kunci baris barang sampai COMMIT/ROLLBACK agar transaksi konkuren tidak
+    //    bisa mengubah stok di antara validasi dan update (mencegah TOCTOU).
+    //    ORDER BY id menjamin urutan penguncian konsisten -> menghindari deadlock.
+    const lockedItems: any[] = await tx
+      .select()
+      .from(item)
+      .where(and(inArray(item.id, itemIds), eq(item.createdById, userId)))
+      .orderBy(item.id)
+      .for("update");
+
+    const lockedMap = new Map<number, any>(lockedItems.map((it: any) => [it.id, it]));
+    const stockUpdates: Array<{ id: number; quantity: number; status: string }> = [];
+    const lines: Array<{ itemId: number; quantity: number; warehouseId: number }> = [];
+
+    for (const [itemId, quantity] of requested) {
+      const dbItem = lockedMap.get(itemId);
+
+      if (!dbItem) {
+        throw new Error("Barang tidak ditemukan di tengah transaksi");
+      }
+
+      // Validasi ulang terhadap snapshot yang sudah terkunci
+      if (dbItem.quantity < quantity) {
+        throw new TransactionValidationError(
+          insufficientStockMessage(dbItem.name, dbItem.quantity, quantity),
+          400
+        );
+      }
+
+      const nextQty = dbItem.quantity - quantity;
+      stockUpdates.push({ id: itemId, quantity: nextQty, status: calculateStockStatus(nextQty) });
+      lines.push({ itemId, quantity, warehouseId: dbItem.warehouseId });
+    }
+
+    // b. Penomoran serial kode transaksi thread-safe
     let transactionCode = "";
     if (typeof tx.execute === "function") {
       try {
@@ -129,7 +174,7 @@ export async function executeOutgoingTransaction(
       transactionCode = formatTransactionCode(nextNum, "KB");
     }
 
-    // b. Insert header transaksi
+    // c. Insert header transaksi
     const [newTx] = await tx
       .insert(outgoingTransaction)
       .values({
@@ -139,68 +184,18 @@ export async function executeOutgoingTransaction(
       })
       .returning();
 
-    // c. Verifikasi item di dalam transaksi & siapkan batch writes
-    let txDbItems: any[] = [];
-    if (typeof tx.query?.item?.findMany === "function") {
-      txDbItems = await tx.query.item.findMany({
-        where: inArray(item.id, itemIds),
-      });
-    } else if (typeof tx.query?.item?.findFirst === "function") {
-      for (const id of itemIds) {
-        const it = await tx.query.item.findFirst({
-          where: eq(item.id, id),
-        });
-        if (it) txDbItems.push(it);
-      }
-    }
-
-    const txItemMap = new Map<number, any>(txDbItems.map((it: any) => [it.id, it]));
-
-    const itemsToInsert: any[] = [];
-    const logsToInsert: any[] = [];
-    const stockUpdates: Array<{ id: number; quantity: number; status: string }> = [];
-
-    for (const reqItem of reqItems) {
-      const { itemId, quantity } = reqItem;
-      const dbItem = txItemMap.get(itemId);
-
-      if (!dbItem) {
-        throw new Error("Barang tidak ditemukan di tengah transaksi");
-      }
-
-      const nextQty = dbItem.quantity - quantity;
-      const status = calculateStockStatus(nextQty);
-
-      itemsToInsert.push({
+    // d. Batch Insert Detail Items (1 Query Batch). `lines` selalu berisi >= 1
+    //    baris karena reqItems tidak kosong dan setiap iterasi push atau throw.
+    await tx.insert(outgoingTransactionItem).values(
+      lines.map((l) => ({
         transactionId: newTx.id,
-        itemId,
-        quantity,
+        itemId: l.itemId,
+        quantity: l.quantity,
         unit: "Pcs",
-      });
+      }))
+    );
 
-      logsToInsert.push({
-        type: "KELUAR",
-        itemId,
-        warehouseId: dbItem.warehouseId,
-        outgoingTransactionId: newTx.id,
-        quantity,
-        createdById: userId,
-        createdAt: txDate,
-      });
-
-      stockUpdates.push({
-        id: itemId,
-        quantity: nextQty,
-        status,
-      });
-    }
-
-    // d. Batch Insert Detail Items (1 Query Batch)
-    if (itemsToInsert.length > 0) {
-      await tx.insert(outgoingTransactionItem).values(itemsToInsert);
-    }
-
-    // e. Batch Update Stok Barang
+    // e. Update Stok Barang
     for (const up of stockUpdates) {
       await tx
         .update(item)
@@ -213,16 +208,23 @@ export async function executeOutgoingTransaction(
     }
 
     // f. Batch Insert Activity Logs (1 Query Batch)
-    if (logsToInsert.length > 0) {
-      await tx.insert(activityLog).values(logsToInsert);
-    }
+    await tx.insert(activityLog).values(
+      lines.map((l) => ({
+        type: "KELUAR",
+        itemId: l.itemId,
+        warehouseId: l.warehouseId,
+        outgoingTransactionId: newTx.id,
+        quantity: l.quantity,
+        createdById: userId,
+        createdAt: txDate,
+      }))
+    );
 
     return {
       transactionCode,
       transactionId: newTx.id,
-      itemsProcessed: reqItems.length,
+      itemsProcessed: lines.length,
       transaction: newTx,
     };
   });
 }
-
