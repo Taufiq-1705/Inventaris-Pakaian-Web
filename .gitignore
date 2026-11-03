@@ -61,3 +61,7 @@ drizzle/
 *.njsproj
 *.sln
 *.sw?
+
+# Local-only notes / agent rules
+.agents/rules/karpathy-guidelines.md
+pure_code_and_flow.txt
