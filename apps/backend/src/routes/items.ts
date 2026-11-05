@@ -8,12 +8,44 @@ import {
   activityLog,
   transfer,
 } from "../db/schema.js";
-import { eq, ilike, and, or, sql, desc, asc } from "drizzle-orm";
+import { eq, ilike, and, or, sql, desc, gte, inArray, type SQL } from "drizzle-orm";
 import { requireAuth } from "../middleware/auth.js";
+import {
+  calculateStockStatus,
+  isWarehouseCategoryAllowed,
+  STOCK_KRITIS_MAX,
+  STOCK_MENIPIS_MAX,
+} from "../lib/businessRules.js";
 
 const router = Router();
 
 router.use(requireAuth);
+
+/** Padanan SQL dari calculateStockStatus() untuk update stok atomik di database. */
+const stockStatusSql = (qty: SQL) =>
+  sql<string>`CASE WHEN ${qty} <= ${STOCK_KRITIS_MAX} THEN 'KRITIS' WHEN ${qty} <= ${STOCK_MENIPIS_MAX} THEN 'MENIPIS' ELSE 'AMAN' END`;
+
+/**
+ * Memvalidasi kecocokan gudang-kategori dalam 1 query (warehouse LEFT JOIN category).
+ * Mengembalikan pesan error bila kategori ditolak, atau null bila diizinkan.
+ */
+async function warehouseCategoryError(warehouseId: number, categoryId: number): Promise<string | null> {
+  const [target] = await db
+    .select({
+      name: warehouse.name,
+      allowedCategoryId: warehouse.allowedCategoryId,
+      allowedCategoryName: category.name,
+    })
+    .from(warehouse)
+    .leftJoin(category, eq(category.id, warehouse.allowedCategoryId))
+    .where(eq(warehouse.id, warehouseId))
+    .limit(1);
+
+  if (target && !isWarehouseCategoryAllowed(target.allowedCategoryId, categoryId)) {
+    return `Gudang "${target.name}" hanya menerima kategori "${target.allowedCategoryName || "tertentu"}"`;
+  }
+  return null;
+}
 
 /**
  * GET /api/items
@@ -63,22 +95,22 @@ router.get("/", async (req, res) => {
     }
 
     if (categorySlug) {
-      // Find category by slug, then filter
-      const cat = await db.query.category.findFirst({
-        where: eq(category.slug, categorySlug),
-      });
-      if (cat) {
-        conditions.push(eq(item.categoryId, cat.id));
-      }
+      // Subquery slug -> id: tanpa round-trip lookup terpisah
+      conditions.push(
+        inArray(
+          item.categoryId,
+          db.select({ id: category.id }).from(category).where(eq(category.slug, categorySlug))
+        )
+      );
     }
 
     if (typeSlug) {
-      const type = await db.query.itemType.findFirst({
-        where: eq(itemType.slug, typeSlug),
-      });
-      if (type) {
-        conditions.push(eq(item.itemTypeId, type.id));
-      }
+      conditions.push(
+        inArray(
+          item.itemTypeId,
+          db.select({ id: itemType.id }).from(itemType).where(eq(itemType.slug, typeSlug))
+        )
+      );
     }
 
     if (size) {
@@ -92,48 +124,48 @@ router.get("/", async (req, res) => {
     const whereClause =
       conditions.length > 0 ? and(...conditions) : undefined;
 
-    // Get total count and status summary breakdown
-    const countResult = await db
-      .select({
-        total: sql<number>`count(*)`,
-        aman: sql<number>`count(*) filter (where ${item.status} = 'AMAN')`,
-        menipis: sql<number>`count(*) filter (where ${item.status} = 'MENIPIS')`,
-        kritis: sql<number>`count(*) filter (where ${item.status} = 'KRITIS')`,
-      })
-      .from(item)
-      .where(whereClause);
+    // Total count + ringkasan status dan halaman data tidak saling bergantung -> paralel
+    const [countResult, items] = await Promise.all([
+      db
+        .select({
+          total: sql<number>`count(*)`,
+          aman: sql<number>`count(*) filter (where ${item.status} = 'AMAN')`,
+          menipis: sql<number>`count(*) filter (where ${item.status} = 'MENIPIS')`,
+          kritis: sql<number>`count(*) filter (where ${item.status} = 'KRITIS')`,
+        })
+        .from(item)
+        .where(whereClause),
+      db
+        .select({
+          id: item.id,
+          code: item.code,
+          name: item.name,
+          materialType: item.materialType,
+          size: item.size,
+          quantity: item.quantity,
+          status: item.status,
+          notes: item.notes,
+          entryDate: item.entryDate,
+          categoryName: category.name,
+          categoryId: item.categoryId,
+          typeName: itemType.name,
+          warehouseName: warehouse.name,
+          warehouseId: item.warehouseId,
+        })
+        .from(item)
+        .leftJoin(category, eq(item.categoryId, category.id))
+        .leftJoin(itemType, eq(item.itemTypeId, itemType.id))
+        .leftJoin(warehouse, eq(item.warehouseId, warehouse.id))
+        .where(whereClause)
+        .orderBy(desc(item.createdAt))
+        .limit(limit)
+        .offset(offset),
+    ]);
 
     const total = Number(countResult[0]?.total ?? 0);
     const aman = Number(countResult[0]?.aman ?? 0);
     const menipis = Number(countResult[0]?.menipis ?? 0);
     const kritis = Number(countResult[0]?.kritis ?? 0);
-
-    // Get items with relations
-    const items = await db
-      .select({
-        id: item.id,
-        code: item.code,
-        name: item.name,
-        materialType: item.materialType,
-        size: item.size,
-        quantity: item.quantity,
-        status: item.status,
-        notes: item.notes,
-        entryDate: item.entryDate,
-        categoryName: category.name,
-        categoryId: item.categoryId,
-        typeName: itemType.name,
-        warehouseName: warehouse.name,
-        warehouseId: item.warehouseId,
-      })
-      .from(item)
-      .leftJoin(category, eq(item.categoryId, category.id))
-      .leftJoin(itemType, eq(item.itemTypeId, itemType.id))
-      .leftJoin(warehouse, eq(item.warehouseId, warehouse.id))
-      .where(whereClause)
-      .orderBy(desc(item.createdAt))
-      .limit(limit)
-      .offset(offset);
 
     res.json({
       items,
@@ -218,53 +250,46 @@ router.post("/", async (req, res) => {
       return;
     }
     // Validate warehouse-category compatibility
-    const targetWarehouse = await db.query.warehouse.findFirst({
-      where: eq(warehouse.id, warehouseId),
-    });
-    if (targetWarehouse?.allowedCategoryId && targetWarehouse.allowedCategoryId !== categoryId) {
-      const allowedCat = await db.query.category.findFirst({
-        where: eq(category.id, targetWarehouse.allowedCategoryId),
-      });
-      res.status(400).json({
-        error: `Gudang "${targetWarehouse.name}" hanya menerima kategori "${allowedCat?.name || 'tertentu'}"`,
-      });
+    const categoryError = await warehouseCategoryError(warehouseId, categoryId);
+    if (categoryError) {
+      res.status(400).json({ error: categoryError });
       return;
     }
 
-    // Determine status based on quantity
-    let status = "AMAN";
-    if (quantity <= 0) status = "KRITIS";
-    else if (quantity <= 20) status = "KRITIS";
-    else if (quantity <= 50) status = "MENIPIS";
+    const initialQty = quantity || 0;
 
-    const [newItem] = await db
-      .insert(item)
-      .values({
-        code,
-        name,
-        categoryId,
-        itemTypeId,
-        materialType: materialType || null,
-        size,
-        quantity: quantity || 0,
-        warehouseId,
-        notes: notes || null,
-        status,
-        createdById: req.user!.id,
-        entryDate: new Date(),
-      })
-      .returning();
+    // Item + activity log ditulis atomik: tidak ada barang tanpa log MASUK-nya
+    const newItem = await db.transaction(async (tx) => {
+      const [created] = await tx
+        .insert(item)
+        .values({
+          code,
+          name,
+          categoryId,
+          itemTypeId,
+          materialType: materialType || null,
+          size,
+          quantity: initialQty,
+          warehouseId,
+          notes: notes || null,
+          status: calculateStockStatus(initialQty),
+          createdById: req.user!.id,
+          entryDate: new Date(),
+        })
+        .returning();
 
-    // Log the activity
-    if (quantity > 0) {
-      await db.insert(activityLog).values({
-        type: "MASUK",
-        itemId: newItem.id,
-        warehouseId,
-        quantity,
-        createdById: req.user!.id,
-      });
-    }
+      if (initialQty > 0) {
+        await tx.insert(activityLog).values({
+          type: "MASUK",
+          itemId: created.id,
+          warehouseId,
+          quantity: initialQty,
+          createdById: req.user!.id,
+        });
+      }
+
+      return created;
+    });
 
     res.status(201).json(newItem);
   } catch (error: any) {
@@ -315,26 +340,19 @@ router.put("/:id", async (req, res) => {
     const checkCategoryId = categoryId ?? existing.categoryId;
 
     if (checkWarehouseId) {
-      const targetWarehouse = await db.query.warehouse.findFirst({
-        where: eq(warehouse.id, checkWarehouseId),
-      });
-      if (targetWarehouse?.allowedCategoryId && targetWarehouse.allowedCategoryId !== checkCategoryId) {
-        const allowedCat = await db.query.category.findFirst({
-          where: eq(category.id, targetWarehouse.allowedCategoryId),
-        });
-        res.status(400).json({
-          error: `Gudang "${targetWarehouse.name}" hanya menerima kategori "${allowedCat?.name || 'tertentu'}"`,
-        });
+      const categoryError = await warehouseCategoryError(checkWarehouseId, checkCategoryId);
+      if (categoryError) {
+        res.status(400).json({ error: categoryError });
         return;
       }
     }
 
-    // Determine new status
-    const newQty = quantity ?? existing.quantity;
-    let status = "AMAN";
-    if (newQty <= 0) status = "KRITIS";
-    else if (newQty <= 20) status = "KRITIS";
-    else if (newQty <= 50) status = "MENIPIS";
+    // quantity/status hanya ditulis bila dikirim. Menulis ulang existing.quantity
+    // yang dibaca di awal bisa menimpa penyesuaian stok konkuren (lost update).
+    const stockFields =
+      quantity !== undefined && quantity !== null
+        ? { quantity, status: calculateStockStatus(quantity) }
+        : {};
 
     const [updated] = await db
       .update(item)
@@ -345,10 +363,9 @@ router.put("/:id", async (req, res) => {
         itemTypeId: itemTypeId ?? existing.itemTypeId,
         materialType: materialType ?? existing.materialType,
         size: size ?? existing.size,
-        quantity: newQty,
+        ...stockFields,
         warehouseId: warehouseId ?? existing.warehouseId,
         notes: notes ?? existing.notes,
-        status,
         updatedAt: new Date(),
       })
       .where(eq(item.id, id))
@@ -382,13 +399,12 @@ router.delete("/:id", async (req, res) => {
       return;
     }
 
-    // Delete associated activity logs first to satisfy foreign key constraints
-    await db.delete(activityLog).where(eq(activityLog.itemId, id));
-    
-    // Delete associated transfers first
-    await db.delete(transfer).where(eq(transfer.itemId, id));
-
-    await db.delete(item).where(eq(item.id, id));
+    // Hapus dependensi FK lalu barangnya secara atomik: gagal di tengah = tidak ada yang terhapus
+    await db.transaction(async (tx) => {
+      await tx.delete(activityLog).where(eq(activityLog.itemId, id));
+      await tx.delete(transfer).where(eq(transfer.itemId, id));
+      await tx.delete(item).where(eq(item.id, id));
+    });
 
     res.json({ message: "Barang berhasil dihapus" });
   } catch (error) {
@@ -411,57 +427,63 @@ router.patch("/:id/stock", async (req, res) => {
     }
 
     const { adjustment } = req.body;
-    if (typeof adjustment !== "number" || adjustment === 0) {
+    if (!Number.isInteger(adjustment) || adjustment === 0) {
       res
         .status(400)
         .json({ error: "Jumlah adjustment harus berupa angka dan tidak boleh 0" });
       return;
     }
 
-    const existing = await db.query.item.findFirst({
-      where: and(eq(item.id, id), eq(item.createdById, req.user!.id)),
-    });
+    const userId = req.user!.id;
+    const ownedItem = and(eq(item.id, id), eq(item.createdById, userId));
 
-    if (!existing) {
-      res.status(404).json({ error: "Barang tidak ditemukan" });
-      return;
-    }
+    // UPDATE atomik bersyarat: hitung stok baru di database (quantity + adj) dan
+    // tolak bila hasilnya negatif. Tidak ada jeda baca-tulis -> aman dari race
+    // condition antar request, dan tidak perlu SELECT terpisah di jalur sukses.
+    const newQty = sql`${item.quantity} + ${adjustment}`;
 
-    const newQty = existing.quantity + adjustment;
-    if (newQty < 0) {
-      res.status(400).json({
-        error: `Stok tidak mencukupi. Stok saat ini: ${existing.quantity} pcs`,
+    const updated = await db.transaction(async (tx) => {
+      const [row] = await tx
+        .update(item)
+        .set({
+          quantity: newQty,
+          status: stockStatusSql(newQty),
+          updatedAt: new Date(),
+        })
+        .where(and(ownedItem, gte(newQty, 0)))
+        .returning();
+
+      if (!row) return null;
+
+      await tx.insert(activityLog).values({
+        type: adjustment > 0 ? "MASUK" : "KELUAR",
+        itemId: id,
+        warehouseId: row.warehouseId,
+        quantity: Math.abs(adjustment),
+        createdById: userId,
       });
+
+      return row;
+    });
+
+    if (!updated) {
+      // Jalur gagal saja: bedakan "tidak ditemukan" dari "stok tidak cukup"
+      const existing = await db.query.item.findFirst({
+        columns: { quantity: true },
+        where: ownedItem,
+      });
+      if (!existing) {
+        res.status(404).json({ error: "Barang tidak ditemukan" });
+      } else {
+        res.status(400).json({
+          error: `Stok tidak mencukupi. Stok saat ini: ${existing.quantity} pcs`,
+        });
+      }
       return;
     }
-
-    // Determine new status
-    let status = "AMAN";
-    if (newQty <= 0) status = "KRITIS";
-    else if (newQty <= 20) status = "KRITIS";
-    else if (newQty <= 50) status = "MENIPIS";
-
-    const [updated] = await db
-      .update(item)
-      .set({
-        quantity: newQty,
-        status,
-        updatedAt: new Date(),
-      })
-      .where(eq(item.id, id))
-      .returning();
-
-    // Log the activity
-    await db.insert(activityLog).values({
-      type: adjustment > 0 ? "MASUK" : "KELUAR",
-      itemId: id,
-      warehouseId: existing.warehouseId,
-      quantity: Math.abs(adjustment),
-      createdById: req.user!.id,
-    });
 
     res.json({
-      message: `Stok berhasil di-update. Stok baru: ${newQty} pcs`,
+      message: `Stok berhasil di-update. Stok baru: ${updated.quantity} pcs`,
       item: updated,
     });
   } catch (error) {

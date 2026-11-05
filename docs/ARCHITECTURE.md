@@ -378,8 +378,7 @@ Seluruh endpoint bisnis berada di bawah prefiks `/api` dan mewajibkan sesi login
 ### 4.6 Pengeluaran Barang / Outgoing (`/api/outgoing`)
 | HTTP Method | Endpoint | Auth | Parameter / Payload Utama | Deskripsi & Fungsi |
 | :--- | :--- | :---: | :--- | :--- |
-| `GET` | `/api/outgoing/next-code` | Sesi | *None* | Menghasilkan kode transaksi nota keluar berikutnya secara otomatis dan berurutan (contoh: `KB-00057`). |
-| `POST` | `/api/outgoing` | Sesi | Body: `{ date?, items: [{ itemId, quantity }] }` | **Eksekusi pengeluaran multi-barang secara transaksional**: membuat header nota transaksi, rincian item, mengurangi kuantitas stok barang terkait, dan menerbitkan log `KELUAR`. |
+| `POST` | `/api/outgoing` | Sesi | Body: `{ date?, items: [{ itemId, quantity }] }` | **Eksekusi pengeluaran multi-barang secara transaksional**: mengambil kode serial `KB-XXXXX` secara atomik via sequence Postgres, membuat header nota transaksi, rincian item, mengurangi kuantitas stok barang secara batch, dan menerbitkan log `KELUAR`. |
 | `GET` | `/api/outgoing/history` | Sesi | Query: `?page=1&limit=10&dateFrom=&dateTo=&type=&search=` | Mengambil riwayat komprehensif keluar-masuk barang dengan filter rentang tanggal, filter tipe (`Semua`, `MASUK`, `KELUAR`), dan pencarian teks. |
 
 ---

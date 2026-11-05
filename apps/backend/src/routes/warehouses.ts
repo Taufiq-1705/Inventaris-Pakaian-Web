@@ -3,6 +3,7 @@ import { db } from "../db/index.js";
 import { warehouse, item } from "../db/schema.js";
 import { eq, and, sql } from "drizzle-orm";
 import { requireAuth } from "../middleware/auth.js";
+import { calculateWarehouseStatus } from "../lib/businessRules.js";
 
 const router = Router();
 
@@ -15,44 +16,40 @@ router.use(requireAuth);
 router.get("/", async (req, res) => {
   try {
     const userId = req.user!.id;
-    const warehouses = await db.select().from(warehouse);
 
-    const result = await Promise.all(
-      warehouses.map(async (w) => {
-        const stockResult = await db
-          .select({
-            currentStock: sql<number>`coalesce(sum(${item.quantity}), 0)`,
-            itemCount: sql<number>`count(*)`,
-          })
-          .from(item)
-          .where(and(eq(item.warehouseId, w.id), eq(item.createdById, userId)));
-
-        const currentStock = Number(stockResult[0]?.currentStock ?? 0);
-        const itemCount = Number(stockResult[0]?.itemCount ?? 0);
-        const percentage =
-          w.maxCapacity > 0
-            ? Math.round((currentStock / w.maxCapacity) * 100)
-            : 0;
-
-        // Determine status label
-        let status = "STABIL";
-        if (percentage >= 95) status = "KAPASITAS KRITIS";
-        else if (percentage >= 80) status = "ZONA PERINGATAN";
-
-        return {
-          id: w.id,
-          name: w.name,
-          description: w.description,
-          locationLabel: w.locationLabel,
-          maxCapacity: w.maxCapacity,
-          allowedCategoryId: w.allowedCategoryId,
-          currentStock,
-          itemCount,
-          percentage,
-          status,
-        };
+    // Satu query agregasi (LEFT JOIN + GROUP BY) menggantikan 1 + N query per gudang.
+    // count(item.id), bukan count(*): gudang tanpa barang harus bernilai 0, bukan 1.
+    const rows = await db
+      .select({
+        id: warehouse.id,
+        name: warehouse.name,
+        description: warehouse.description,
+        locationLabel: warehouse.locationLabel,
+        maxCapacity: warehouse.maxCapacity,
+        allowedCategoryId: warehouse.allowedCategoryId,
+        currentStock: sql<number>`coalesce(sum(${item.quantity}), 0)::integer`,
+        itemCount: sql<number>`count(${item.id})::integer`,
       })
-    );
+      .from(warehouse)
+      .leftJoin(item, and(eq(item.warehouseId, warehouse.id), eq(item.createdById, userId)))
+      .groupBy(warehouse.id)
+      .orderBy(warehouse.id);
+
+    const result = rows.map((w) => {
+      const currentStock = Number(w.currentStock ?? 0);
+      const percentage =
+        w.maxCapacity > 0
+          ? Math.round((currentStock / w.maxCapacity) * 100)
+          : 0;
+
+      return {
+        ...w,
+        currentStock,
+        itemCount: Number(w.itemCount ?? 0),
+        percentage,
+        status: calculateWarehouseStatus(percentage),
+      };
+    });
 
     res.json({ warehouses: result });
   } catch (error) {
@@ -73,27 +70,32 @@ router.get("/:id", async (req, res) => {
       return;
     }
 
-    const w = await db.query.warehouse.findFirst({
-      where: eq(warehouse.id, id),
-    });
+    const userId = req.user!.id;
+    const [w] = await db
+      .select({
+        id: warehouse.id,
+        name: warehouse.name,
+        description: warehouse.description,
+        locationLabel: warehouse.locationLabel,
+        maxCapacity: warehouse.maxCapacity,
+        allowedCategoryId: warehouse.allowedCategoryId,
+        createdAt: warehouse.createdAt,
+        updatedAt: warehouse.updatedAt,
+        currentStock: sql<number>`coalesce(sum(${item.quantity}), 0)::integer`,
+        itemCount: sql<number>`count(${item.id})::integer`,
+      })
+      .from(warehouse)
+      .leftJoin(item, and(eq(item.warehouseId, warehouse.id), eq(item.createdById, userId)))
+      .where(eq(warehouse.id, id))
+      .groupBy(warehouse.id);
 
     if (!w) {
       res.status(404).json({ error: "Gudang tidak ditemukan" });
       return;
     }
 
-    // Get items in this warehouse (scoped to user)
-    const userId = req.user!.id;
-    const items = await db
-      .select({
-        currentStock: sql<number>`coalesce(sum(${item.quantity}), 0)`,
-        itemCount: sql<number>`count(*)`,
-      })
-      .from(item)
-      .where(and(eq(item.warehouseId, id), eq(item.createdById, userId)));
-
-    const currentStock = Number(items[0]?.currentStock ?? 0);
-    const itemCount = Number(items[0]?.itemCount ?? 0);
+    const currentStock = Number(w.currentStock ?? 0);
+    const itemCount = Number(w.itemCount ?? 0);
     const percentage =
       w.maxCapacity > 0
         ? Math.round((currentStock / w.maxCapacity) * 100)

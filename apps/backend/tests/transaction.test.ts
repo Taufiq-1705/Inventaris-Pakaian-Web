@@ -33,8 +33,8 @@ interface HarnessOptions {
   catalog?: CatalogItem[];
   /** Snapshot barang hasil SELECT ... FOR UPDATE di dalam transaksi (default = catalog). */
   txCatalog?: CatalogItem[];
-  /** Kode transaksi terakhir untuk fallback SELECT (null = belum ada transaksi). */
-  latestCode?: string | null;
+  /** Nilai yang dikembalikan nextval('outgoing_tx_seq'). */
+  nextSeq?: number;
   /** API relational query yang tersedia pada mock untuk pre-check. */
   lookup?: "findMany" | "findFirst" | "none";
 }
@@ -51,13 +51,13 @@ const DEFAULT_CATALOG: CatalogItem[] = [
 function createHarness(opts: HarnessOptions = {}) {
   const catalog = opts.catalog ?? DEFAULT_CATALOG;
   const txCatalog = opts.txCatalog ?? catalog;
-  const latestCode = opts.latestCode === undefined ? "KB-00010" : opts.latestCode;
+  const nextSeq = opts.nextSeq ?? 11;
   const lookup = opts.lookup ?? "findMany";
 
   const lifecycle = { begin: vi.fn(), commit: vi.fn(), rollback: vi.fn() };
   const writes = {
     inserts: [] as Array<{ table: unknown; values: any }>,
-    updates: [] as Array<{ table: unknown; set: any }>,
+    updates: [] as Array<{ table: unknown; set: any; where: any }>,
   };
 
   const buildItemQuery = (source: CatalogItem[]): Record<string, any> => {
@@ -70,16 +70,15 @@ function createHarness(opts: HarnessOptions = {}) {
     return {};
   };
 
-  // Satu objek chain melayani dua query di dalam transaksi:
-  //   lock     : select().from().where().orderBy().for("update") -> txCatalog
-  //   fallback : select().from().where().orderBy().limit(1)      -> kode terakhir
+  // Lock query di dalam transaksi: select().from().where().orderBy().for("update") -> txCatalog
   const tx: any = {
     select: vi.fn().mockReturnThis(),
     from: vi.fn().mockReturnThis(),
     where: vi.fn().mockReturnThis(),
     orderBy: vi.fn().mockReturnThis(),
     for: vi.fn().mockResolvedValue([...txCatalog]),
-    limit: vi.fn().mockResolvedValue(latestCode ? [{ transactionCode: latestCode }] : []),
+    // nextval(): bentuk hasil asli postgres-js = array baris
+    execute: vi.fn().mockResolvedValue([{ next_val: String(nextSeq) }]),
     insert: vi.fn((table: unknown) => ({
       values: vi.fn((values: any) => {
         writes.inserts.push({ table, values });
@@ -88,8 +87,8 @@ function createHarness(opts: HarnessOptions = {}) {
     })),
     update: vi.fn((table: unknown) => ({
       set: vi.fn((set: any) => ({
-        where: vi.fn(async () => {
-          writes.updates.push({ table, set });
+        where: vi.fn(async (where: any) => {
+          writes.updates.push({ table, set, where });
         }),
       })),
     })),
@@ -115,6 +114,22 @@ function createHarness(opts: HarnessOptions = {}) {
 
 const insertsInto = (writes: ReturnType<typeof createHarness>["writes"], table: unknown) =>
   writes.inserts.filter((w) => w.table === table);
+
+/**
+ * Mendekode SET dari batch UPDATE (`CASE item.id WHEN <id> THEN <nilai> ... END`)
+ * menjadi daftar { id, quantity, status } sesuai urutan cabang WHEN.
+ */
+function decodeStockUpdates(set: any) {
+  const dialect = new PgDialect();
+  const pairs = (expr: any) => {
+    const { params } = dialect.sqlToQuery(expr);
+    const out: Array<[unknown, unknown]> = [];
+    for (let i = 0; i < params.length; i += 2) out.push([params[i], params[i + 1]]);
+    return out;
+  };
+  const statuses = pairs(set.status);
+  return pairs(set.quantity).map(([id, quantity], i) => ({ id, quantity, status: statuses[i][1] }));
+}
 
 async function expectValidationError(
   promise: Promise<unknown>,
@@ -162,8 +177,11 @@ describe("Path V — Validasi input (guard clause, sebelum menyentuh DB)", () =>
     ["quantity negatif (-10)", { itemId: 1, quantity: -10 }],
     ["quantity undefined", { itemId: 1 }],
     ["quantity null", { itemId: 1, quantity: null }],
+    ["quantity string ('sepuluh')", { itemId: 1, quantity: "sepuluh" }],
+    ["quantity desimal (1.5)", { itemId: 1, quantity: 1.5 }],
     ["itemId tidak ada", { quantity: 5 }],
     ["itemId = 0", { itemId: 0, quantity: 5 }],
+    ["itemId negatif (-1)", { itemId: -1, quantity: 5 }],
   ])("V2 %s -> 400 'ID barang dan jumlah yang valid wajib diisi'", async (_label, line) => {
     const { db } = createHarness();
 
@@ -215,7 +233,9 @@ describe("Path B — Boundary kecukupan stok (pre-check di luar transaksi)", () 
     await executeOutgoingTransaction(db, USER_ID, { items: [{ itemId: 1, quantity: 50 }] });
 
     expect(lifecycle.commit).toHaveBeenCalledTimes(1);
-    expect(writes.updates[0].set).toMatchObject({ quantity: 0, status: "KRITIS" });
+    expect(decodeStockUpdates(writes.updates[0].set)).toEqual([
+      { id: 1, quantity: 0, status: "KRITIS" },
+    ]);
   });
 
   it("B3 diminta = stok - 1 (49 < 50) -> sukses, sisa stok 1", async () => {
@@ -223,7 +243,7 @@ describe("Path B — Boundary kecukupan stok (pre-check di luar transaksi)", () 
 
     await executeOutgoingTransaction(db, USER_ID, { items: [{ itemId: 1, quantity: 49 }] });
 
-    expect(writes.updates[0].set.quantity).toBe(1);
+    expect(decodeStockUpdates(writes.updates[0].set)[0].quantity).toBe(1);
   });
 
   it("B4 barang tidak ditemukan / milik user lain (query kosong) -> 404", async () => {
@@ -315,7 +335,9 @@ describe("Path S — Skenario sukses & COMMIT", () => {
     // Pemotongan stok: 50 - 10 = 40 -> MENIPIS
     expect(tx.update).toHaveBeenCalledTimes(1);
     expect(writes.updates[0].table).toBe(item);
-    expect(writes.updates[0].set).toMatchObject({ quantity: 40, status: "MENIPIS" });
+    expect(decodeStockUpdates(writes.updates[0].set)).toEqual([
+      { id: 1, quantity: 40, status: "MENIPIS" },
+    ]);
   });
 
   it("S2 payload.date diisi -> dipakai untuk header & activity log", async () => {
@@ -339,7 +361,7 @@ describe("Path S — Skenario sukses & COMMIT", () => {
     expect(writes.inserts[0].values.date).toEqual(now);
   });
 
-  it("S4 multi-barang -> 1 bulk read, batch insert, status stok AMAN/MENIPIS/KRITIS", async () => {
+  it("S4 multi-barang -> 1 bulk read, batch insert, 1 batch update, status stok AMAN/MENIPIS/KRITIS", async () => {
     const catalog = [
       { id: 10, name: "Kemeja Putih", quantity: 100, warehouseId: 1 },
       { id: 20, name: "Celana Chino", quantity: 60, warehouseId: 1 },
@@ -366,11 +388,15 @@ describe("Path S — Skenario sukses & COMMIT", () => {
       1, 1, 2,
     ]);
 
-    expect(writes.updates.map((u) => u.set)).toEqual([
-      expect.objectContaining({ quantity: 90, status: "AMAN" }),
-      expect.objectContaining({ quantity: 40, status: "MENIPIS" }),
-      expect.objectContaining({ quantity: 15, status: "KRITIS" }),
+    // 1 UPDATE untuk seluruh barang (CASE per id), bukan N UPDATE
+    expect(tx.update).toHaveBeenCalledTimes(1);
+    expect(decodeStockUpdates(writes.updates[0].set)).toEqual([
+      { id: 10, quantity: 90, status: "AMAN" },
+      { id: 20, quantity: 40, status: "MENIPIS" },
+      { id: 30, quantity: 15, status: "KRITIS" },
     ]);
+    const { params } = new PgDialect().sqlToQuery(writes.updates[0].where);
+    expect(params).toEqual([10, 20, 30]); // WHERE id IN (...) hanya barang yang diminta
   });
 });
 
@@ -397,15 +423,14 @@ describe("Path R — Kegagalan di dalam transaksi memicu ROLLBACK (mock db.trans
     expect(insertsInto(writes, activityLog)).toHaveLength(0);
   });
 
-  it("R2 update stok barang ke-2 gagal -> ROLLBACK membatalkan update barang ke-1", async () => {
+  it("R2 batch update stok gagal -> ROLLBACK membatalkan header & detail yang sudah di-insert", async () => {
     const { db, tx, lifecycle, writes } = createHarness({
       catalog: [
         { id: 1, name: "Kemeja Oxford", quantity: 50, warehouseId: 1 },
         { id: 2, name: "Celana Chino", quantity: 50, warehouseId: 1 },
       ],
     });
-    const passthrough = tx.update.getMockImplementation()!;
-    tx.update.mockImplementationOnce(passthrough).mockImplementationOnce(() => {
+    tx.update.mockImplementationOnce(() => {
       throw new Error("deadlock detected");
     });
 
@@ -418,8 +443,8 @@ describe("Path R — Kegagalan di dalam transaksi memicu ROLLBACK (mock db.trans
       })
     ).rejects.toThrow("deadlock detected");
 
-    // Satu tulisan parsial sudah terjadi -> hanya ROLLBACK yang menjamin atomisitas
-    expect(writes.updates).toHaveLength(1);
+    // Header + detail sudah tertulis -> hanya ROLLBACK yang menjamin atomisitas
+    expect(writes.inserts.map((w) => w.table)).toEqual([outgoingTransaction, outgoingTransactionItem]);
     expect(lifecycle.rollback).toHaveBeenCalledTimes(1);
     expect(lifecycle.commit).not.toHaveBeenCalled();
     expect(insertsInto(writes, activityLog)).toHaveLength(0);
@@ -473,62 +498,36 @@ describe("Path R — Kegagalan di dalam transaksi memicu ROLLBACK (mock db.trans
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-describe("Path C — Penomoran kode transaksi (sequence & fallback)", () => {
+describe("Path C — Penomoran kode transaksi (sequence Postgres)", () => {
   const run = (h: ReturnType<typeof createHarness>) =>
     executeOutgoingTransaction(h.db, USER_ID, { items: [{ itemId: 1, quantity: 1 }] });
 
-  it("C1 sequence mengembalikan { rows: [...] } -> KB-00042, fallback SELECT tidak dipanggil", async () => {
-    const h = createHarness();
-    h.tx.execute = vi.fn().mockResolvedValue({ rows: [{ next_val: "42" }] });
+  it("C1 nextval mengembalikan bigint sebagai string (bentuk asli postgres-js) -> KB-00042", async () => {
+    const h = createHarness({ nextSeq: 42 });
 
     const result = await run(h);
 
     expect(h.tx.execute).toHaveBeenCalledTimes(1);
     expect(result.transactionCode).toBe("KB-00042");
-    expect(h.tx.limit).not.toHaveBeenCalled(); // fallback SELECT tidak dijalankan
+    expect(h.writes.inserts[0].values.transactionCode).toBe("KB-00042");
   });
 
-  it("C2 sequence mengembalikan array (bentuk asli postgres-js) -> KB-00007", async () => {
+  it("C2 nilai sequence melebihi 5 digit -> tidak terpotong (KB-123456)", async () => {
+    const result = await run(createHarness({ nextSeq: 123456 }));
+    expect(result.transactionCode).toBe("KB-123456");
+  });
+
+  it("C3 nextval gagal (sequence belum dibuat) -> error naik, ROLLBACK, header tidak di-insert", async () => {
     const h = createHarness();
-    h.tx.execute = vi.fn().mockResolvedValue([{ next_val: 7 }]);
+    const seqError = new Error('relation "outgoing_tx_seq" does not exist');
+    h.tx.execute.mockRejectedValueOnce(seqError);
 
-    const result = await run(h);
+    await expect(run(h)).rejects.toBe(seqError);
 
-    expect(result.transactionCode).toBe("KB-00007");
-    expect(h.tx.limit).not.toHaveBeenCalled();
-  });
-
-  it("C3 sequence mengembalikan baris kosong -> fallback SELECT -> KB-00011", async () => {
-    const h = createHarness();
-    h.tx.execute = vi.fn().mockResolvedValue({ rows: [] });
-
-    const result = await run(h);
-
-    expect(h.tx.limit).toHaveBeenCalledTimes(1);
-    expect(result.transactionCode).toBe("KB-00011");
-  });
-
-  it("C4 sequence melempar error -> ditelan, fallback SELECT -> KB-00011", async () => {
-    const h = createHarness();
-    h.tx.execute = vi
-      .fn()
-      .mockRejectedValue(new Error("relation 'outgoing_tx_seq' does not exist"));
-
-    const result = await run(h);
-
-    expect(h.tx.execute).toHaveBeenCalledTimes(1);
-    expect(h.tx.limit).toHaveBeenCalledTimes(1);
-    expect(result.transactionCode).toBe("KB-00011");
-  });
-
-  it("C5 tanpa tx.execute & belum ada transaksi sebelumnya -> KB-00001", async () => {
-    const result = await run(createHarness({ latestCode: null }));
-    expect(result.transactionCode).toBe("KB-00001");
-  });
-
-  it("C6 kode terakhir tidak cocok pola KB-(\\d+) -> mulai dari KB-00001", async () => {
-    const result = await run(createHarness({ latestCode: "LEGACY-77" }));
-    expect(result.transactionCode).toBe("KB-00001");
+    // Tidak ada fallback: di Postgres transaksi sudah berstatus aborted setelah error ini
+    expect(h.writes.inserts).toHaveLength(0);
+    expect(h.lifecycle.rollback).toHaveBeenCalledWith(seqError);
+    expect(h.lifecycle.commit).not.toHaveBeenCalled();
   });
 });
 
@@ -624,7 +623,9 @@ describe("Path K — Regresi cacat K1 (oversell) & K2 (TOCTOU)", () => {
       { transactionId: 99, itemId: 1, quantity: 10, unit: "Pcs" },
     ]);
     expect(tx.update).toHaveBeenCalledTimes(1);
-    expect(writes.updates[0].set).toMatchObject({ quantity: 40, status: "MENIPIS" });
+    expect(decodeStockUpdates(writes.updates[0].set)).toEqual([
+      { id: 1, quantity: 40, status: "MENIPIS" },
+    ]);
   });
 
   it("K2 stok turun oleh transaksi konkuren (50 -> 3) -> divalidasi ulang di bawah lock, 400 + ROLLBACK", async () => {

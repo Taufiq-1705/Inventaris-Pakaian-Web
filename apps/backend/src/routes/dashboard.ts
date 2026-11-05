@@ -17,43 +17,43 @@ router.get("/stats", async (req, res) => {
   try {
     const userId = req.user!.id;
 
-    // Total distinct items (jenis barang) — scoped to user
-    const totalItemsResult = await db
-      .select({ count: sql<number>`count(*)` })
-      .from(item)
-      .where(eq(item.createdById, userId));
-    const totalItems = Number(totalItemsResult[0]?.count ?? 0);
+    // Total jenis barang + total stok digabung dalam 1 query, dan dijalankan
+    // paralel dengan agregasi per gudang (sebelumnya 3 query berurutan).
+    const [totalsResult, warehouseAggResult] = await Promise.all([
+      db
+        .select({
+          count: sql<number>`count(*)`,
+          total: sql<number>`coalesce(sum(${item.quantity}), 0)`,
+        })
+        .from(item)
+        .where(eq(item.createdById, userId)),
+      // Per-warehouse stats — Single-Trip Relational Aggregation (LEFT JOIN + GROUP BY)
+      db
+        .select({
+          id: warehouse.id,
+          name: warehouse.name,
+          description: warehouse.description,
+          locationLabel: warehouse.locationLabel,
+          maxCapacity: warehouse.maxCapacity,
+          currentStock: sql<number>`coalesce(sum(${item.quantity}), 0)::integer`,
+        })
+        .from(warehouse)
+        .leftJoin(
+          item,
+          and(eq(item.warehouseId, warehouse.id), eq(item.createdById, userId))
+        )
+        .groupBy(
+          warehouse.id,
+          warehouse.name,
+          warehouse.description,
+          warehouse.locationLabel,
+          warehouse.maxCapacity
+        )
+        .orderBy(warehouse.id),
+    ]);
 
-    // Total stock across all items — scoped to user
-    const totalStockResult = await db
-      .select({ total: sql<number>`coalesce(sum(${item.quantity}), 0)` })
-      .from(item)
-      .where(eq(item.createdById, userId));
-    const totalStock = Number(totalStockResult[0]?.total ?? 0);
-
-    // Per-warehouse stats — Single-Trip Relational Aggregation (LEFT JOIN + GROUP BY)
-    const warehouseAggResult = await db
-      .select({
-        id: warehouse.id,
-        name: warehouse.name,
-        description: warehouse.description,
-        locationLabel: warehouse.locationLabel,
-        maxCapacity: warehouse.maxCapacity,
-        currentStock: sql<number>`coalesce(sum(${item.quantity}), 0)::integer`,
-      })
-      .from(warehouse)
-      .leftJoin(
-        item,
-        and(eq(item.warehouseId, warehouse.id), eq(item.createdById, userId))
-      )
-      .groupBy(
-        warehouse.id,
-        warehouse.name,
-        warehouse.description,
-        warehouse.locationLabel,
-        warehouse.maxCapacity
-      )
-      .orderBy(warehouse.id);
+    const totalItems = Number(totalsResult[0]?.count ?? 0);
+    const totalStock = Number(totalsResult[0]?.total ?? 0);
 
     const warehouseStats = warehouseAggResult.map((w) => {
       const currentStock = Number(w.currentStock ?? 0);

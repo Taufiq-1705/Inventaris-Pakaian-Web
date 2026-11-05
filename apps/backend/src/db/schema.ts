@@ -48,7 +48,9 @@ export const session = pgTable("session", {
   userId: text("user_id")
     .notNull()
     .references(() => user.id, { onDelete: "cascade" }),
-});
+}, (table) => ({
+  userIdIdx: index("session_user_id_idx").on(table.userId),
+}));
 
 export const account = pgTable("account", {
   id: text("id").primaryKey(),
@@ -66,7 +68,9 @@ export const account = pgTable("account", {
   password: text("password"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
-});
+}, (table) => ({
+  userIdIdx: index("account_user_id_idx").on(table.userId),
+}));
 
 export const verification = pgTable("verification", {
   id: text("id").primaryKey(),
@@ -138,9 +142,12 @@ export const item = pgTable("item", {
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 }, (table) => ({
   // item.code already indexed via .unique()
-  nameIdx: index("item_name_idx").on(table.name),
+  // Pencarian ILIKE '%x%' pada nama/kode butuh GIN trigram (btree tidak terpakai
+  // untuk wildcard di depan). Membutuhkan ekstensi pg_trgm (lihat src/db/extensions.ts).
+  nameTrgmIdx: index("item_name_trgm_idx").using("gin", table.name.op("gin_trgm_ops")),
+  codeTrgmIdx: index("item_code_trgm_idx").using("gin", table.code.op("gin_trgm_ops")),
   warehouseIdx: index("item_warehouse_id_idx").on(table.warehouseId),
-  createdByIdx: index("item_created_by_id_idx").on(table.createdById),
+  // Tidak ada indeks tunggal created_by_id: sudah tercakup prefix indeks komposit di bawah
   userWarehouseIdx: index("item_user_warehouse_idx").on(table.createdById, table.warehouseId),
   userStatusIdx: index("item_user_status_idx").on(table.createdById, table.status),
   userCreatedAtIdx: index("item_user_created_at_idx").on(table.createdById, table.createdAt),
@@ -178,6 +185,7 @@ export const outgoingTransaction = pgTable("outgoing_transaction", {
   createdAt: timestamp("created_at").notNull().defaultNow(),
 }, (table) => ({
   transactionUserUnique: unique("transaction_user_unique").on(table.transactionCode, table.createdById),
+  codeTrgmIdx: index("outgoing_tx_code_trgm_idx").using("gin", table.transactionCode.op("gin_trgm_ops")),
   userCreatedAtIdx: index("outgoing_tx_user_created_idx").on(table.createdById, table.createdAt),
 }));
 
@@ -213,7 +221,7 @@ export const activityLog = pgTable("activity_log", {
 }, (table) => ({
   userCreatedAtIdx: index("activity_log_user_created_idx").on(table.createdById, table.createdAt),
   itemIdIdx: index("activity_log_item_id_idx").on(table.itemId),
-  typeIdx: index("activity_log_type_idx").on(table.type),
+  // Tidak ada indeks tunggal `type`: hanya 3 nilai, tidak pernah dipilih planner
 }));
 
 // ============================================================

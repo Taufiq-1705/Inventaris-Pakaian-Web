@@ -28,6 +28,13 @@ export const auth = betterAuth({
   session: {
     // Store device info in sessions (for Pengaturan page device list)
     storeSessionInDatabase: true,
+    // Sesi divalidasi dari cookie bertanda tangan selama maxAge, sehingga
+    // requireAuth tidak menembak tabel session di setiap request API.
+    // Trade-off (disetujui): sesi yang dicabut baru benar-benar mati <= 5 menit.
+    cookieCache: {
+      enabled: true,
+      maxAge: 5 * 60,
+    },
   },
   trustedOrigins: [process.env.FRONTEND_URL || "http://localhost:5173"],
 });

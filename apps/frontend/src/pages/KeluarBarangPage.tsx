@@ -22,7 +22,6 @@ export const KeluarBarangPage: React.FC = () => {
     const dd = String(today.getDate()).padStart(2, '0');
     return `${yyyy}-${mm}-${dd}`;
   });
-  const [trxId, setTrxId] = useState('');
   const [selectedItemId, setSelectedItemId] = useState('');
   const [quantity, setQuantity] = useState<number | ''>('');
   
@@ -65,16 +64,6 @@ export const KeluarBarangPage: React.FC = () => {
     setAlertOpen(true);
   };
 
-  // Fetch next transaction code
-  const fetchNextCode = useCallback(async () => {
-    try {
-      const res = await api<{ code: string }>('/api/outgoing/next-code');
-      setTrxId(res.code);
-    } catch (err) {
-      console.error('Failed to fetch transaction code:', err);
-    }
-  }, []);
-
   // Fetch items for form select dropdown
   const fetchItems = useCallback(async () => {
     setLoadingItems(true);
@@ -112,12 +101,11 @@ export const KeluarBarangPage: React.FC = () => {
 
   // Load initial data
   useEffect(() => {
-    fetchNextCode();
     fetchItems();
     api<{ warehouses: WarehouseStats[] }>('/api/warehouses')
       .then(data => setWarehouses(data.warehouses))
       .catch(console.error);
-  }, [fetchNextCode, fetchItems]);
+  }, [fetchItems]);
 
   // Sync history when active query params change
   useEffect(() => {
@@ -192,7 +180,7 @@ export const KeluarBarangPage: React.FC = () => {
 
     setSavingTx(true);
     try {
-      await api('/api/outgoing', {
+      const res = await api<{ transaction: { transactionCode: string } }>('/api/outgoing', {
         method: 'POST',
         body: JSON.stringify({
           date,
@@ -203,9 +191,12 @@ export const KeluarBarangPage: React.FC = () => {
         }),
       });
 
-      showAlert('Transaksi Disimpan', 'Transaksi pengeluaran berhasil disimpan!', 'success');
+      showAlert(
+        'Transaksi Disimpan',
+        `Transaksi ${res.transaction.transactionCode} berhasil disimpan!`,
+        'success'
+      );
       handleClearForm();
-      fetchNextCode();
       fetchItems();
       fetchHistory(1);
     } catch (err: any) {
@@ -310,7 +301,7 @@ export const KeluarBarangPage: React.FC = () => {
                   <input
                     className="w-full bg-surface-container-highest border border-outline-variant rounded-lg px-4 py-2.5 text-body-sm focus:border-primary outline-none text-on-surface-variant opacity-70 cursor-not-allowed"
                     type="text"
-                    value={trxId}
+                    value="Otomatis saat disimpan"
                     disabled
                     readOnly
                   />

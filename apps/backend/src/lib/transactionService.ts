@@ -1,5 +1,5 @@
 import { item, outgoingTransaction, outgoingTransactionItem, activityLog } from "../db/schema.js";
-import { eq, and, desc, inArray, sql } from "drizzle-orm";
+import { eq, and, inArray, sql } from "drizzle-orm";
 import { calculateStockStatus, formatTransactionCode } from "./businessRules.js";
 
 export interface OutgoingItemRequest {
@@ -40,9 +40,9 @@ function insufficientStockMessage(name: string, available: number, requested: nu
  * 3. Pre-check cepat di luar transaksi: bulk query via inArray + Hash Map O(1)
  * 4. Eksekusi db.transaction:
  *    a. Kunci baris barang (SELECT ... FOR UPDATE) & validasi ulang stok
- *    b. Generate nomor serial transaksi KB-XXXXX (Atomic sequence / fallback)
+ *    b. Generate nomor serial transaksi KB-XXXXX (Atomic sequence)
  *    c. Insert header outgoingTransaction
- *    d. Batch insert outgoingTransactionItem, update stok, batch insert activityLog
+ *    d. Batch insert outgoingTransactionItem, batch update stok, batch insert activityLog
  */
 export async function executeOutgoingTransaction(
   dbInstance: any,
@@ -55,10 +55,10 @@ export async function executeOutgoingTransaction(
     throw new TransactionValidationError("Daftar barang tidak boleh kosong", 400);
   }
 
-  // 1. Validasi masukan dasar untuk setiap item
+  // 1. Validasi masukan dasar untuk setiap item (wajib integer positif)
   for (const reqItem of reqItems) {
     const { itemId, quantity } = reqItem;
-    if (!itemId || quantity === undefined || quantity === null || quantity <= 0) {
+    if (!Number.isInteger(itemId) || itemId <= 0 || !Number.isInteger(quantity) || quantity <= 0) {
       throw new TransactionValidationError("ID barang dan jumlah yang valid wajib diisi", 400);
     }
   }
@@ -144,35 +144,12 @@ export async function executeOutgoingTransaction(
       lines.push({ itemId, quantity, warehouseId: dbItem.warehouseId });
     }
 
-    // b. Penomoran serial kode transaksi thread-safe
-    let transactionCode = "";
-    if (typeof tx.execute === "function") {
-      try {
-        const seqResult = await tx.execute(sql`SELECT nextval('outgoing_tx_seq') AS next_val`);
-        const nextVal = seqResult?.rows?.[0]?.next_val ?? seqResult?.[0]?.next_val;
-        if (nextVal !== undefined && nextVal !== null) {
-          transactionCode = formatTransactionCode(Number(nextVal), "KB");
-        }
-      } catch (_seqErr) {
-        // Fallback jika sequence belum dibuat di database atau environment mock
-      }
-    }
-
-    if (!transactionCode) {
-      const latestTx = await tx
-        .select({ transactionCode: outgoingTransaction.transactionCode })
-        .from(outgoingTransaction)
-        .where(eq(outgoingTransaction.createdById, userId))
-        .orderBy(desc(outgoingTransaction.id))
-        .limit(1);
-
-      let nextNum = 1;
-      if (latestTx.length > 0 && latestTx[0].transactionCode) {
-        const match = latestTx[0].transactionCode.match(/KB-(\d+)/);
-        if (match) nextNum = parseInt(match[1], 10) + 1;
-      }
-      transactionCode = formatTransactionCode(nextNum, "KB");
-    }
+    // b. Penomoran serial kode transaksi thread-safe via sequence Postgres.
+    //    Tidak ada fallback: bila nextval() gagal, Postgres sudah membatalkan
+    //    transaksi (status aborted) sehingga query lanjutan apa pun pasti gagal.
+    //    Error dibiarkan naik -> ROLLBACK -> HTTP 500.
+    const [seqRow] = await tx.execute(sql`SELECT nextval('outgoing_tx_seq') AS next_val`);
+    const transactionCode = formatTransactionCode(Number(seqRow.next_val), "KB");
 
     // c. Insert header transaksi
     const [newTx] = await tx
@@ -195,17 +172,19 @@ export async function executeOutgoingTransaction(
       }))
     );
 
-    // e. Update Stok Barang
-    for (const up of stockUpdates) {
-      await tx
-        .update(item)
-        .set({
-          quantity: up.quantity,
-          status: up.status,
-          updatedAt: new Date(),
-        })
-        .where(eq(item.id, up.id));
-    }
+    // e. Batch Update Stok Barang (1 Query): CASE per id, bukan 1 UPDATE per barang.
+    //    ::integer wajib karena parameter di cabang THEN tidak bertipe (default text).
+    const whenQty = stockUpdates.map((u) => sql`WHEN ${u.id} THEN ${u.quantity}::integer`);
+    const whenStatus = stockUpdates.map((u) => sql`WHEN ${u.id} THEN ${u.status}`);
+
+    await tx
+      .update(item)
+      .set({
+        quantity: sql`CASE ${item.id} ${sql.join(whenQty, sql` `)} END`,
+        status: sql`CASE ${item.id} ${sql.join(whenStatus, sql` `)} END`,
+        updatedAt: new Date(),
+      })
+      .where(inArray(item.id, stockUpdates.map((u) => u.id)));
 
     // f. Batch Insert Activity Logs (1 Query Batch)
     await tx.insert(activityLog).values(

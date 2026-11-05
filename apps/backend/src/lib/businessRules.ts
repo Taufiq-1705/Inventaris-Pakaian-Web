@@ -6,6 +6,10 @@
 export type StockStatus = "AMAN" | "MENIPIS" | "KRITIS";
 export type WarehouseStatus = "STABIL" | "ZONA PERINGATAN" | "KAPASITAS KRITIS";
 
+/** Batas atas (inklusif) stok berstatus KRITIS dan MENIPIS. */
+export const STOCK_KRITIS_MAX = 20;
+export const STOCK_MENIPIS_MAX = 50;
+
 /**
  * Calculates item stock status according to standard thresholds:
  * - <= 20 Pcs: KRITIS (Critical)
@@ -13,8 +17,8 @@ export type WarehouseStatus = "STABIL" | "ZONA PERINGATAN" | "KAPASITAS KRITIS";
  * - > 50 Pcs: AMAN (Safe)
  */
 export function calculateStockStatus(quantity: number): StockStatus {
-  if (quantity <= 20) return "KRITIS";
-  if (quantity <= 50) return "MENIPIS";
+  if (quantity <= STOCK_KRITIS_MAX) return "KRITIS";
+  if (quantity <= STOCK_MENIPIS_MAX) return "MENIPIS";
   return "AMAN";
 }
 

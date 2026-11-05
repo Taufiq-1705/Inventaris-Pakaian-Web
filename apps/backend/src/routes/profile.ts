@@ -132,18 +132,20 @@ router.get("/stats", async (req, res) => {
   try {
     const userId = req.user!.id;
 
-    // Count items created (Barang Masuk)
-    const masukResult = await db
-      .select({ count: sql<number>`count(*)` })
-      .from(activityLog)
-      .where(eq(activityLog.createdById, userId));
+    // Kedua hitungan independen -> paralel
+    const [masukResult, transferResult] = await Promise.all([
+      // Count items created (Barang Masuk)
+      db
+        .select({ count: sql<number>`count(*)` })
+        .from(activityLog)
+        .where(eq(activityLog.createdById, userId)),
+      // Count transfers completed (Mutasi Selesai)
+      db
+        .select({ count: sql<number>`count(*)` })
+        .from(transfer)
+        .where(eq(transfer.createdById, userId)),
+    ]);
     const totalActivities = masukResult[0]?.count ?? 0;
-
-    // Count transfers completed (Mutasi Selesai)
-    const transferResult = await db
-      .select({ count: sql<number>`count(*)` })
-      .from(transfer)
-      .where(eq(transfer.createdById, userId));
     const totalTransfers = transferResult[0]?.count ?? 0;
 
     res.json({
@@ -206,16 +208,16 @@ router.delete("/sessions/:id", async (req, res) => {
     const userId = req.user!.id;
     const sessionId = req.params.id;
 
-    const targetSession = await db.query.session.findFirst({
-      where: and(eq(session.id, sessionId), eq(session.userId, userId)),
-    });
+    const [deleted] = await db
+      .delete(session)
+      .where(and(eq(session.id, sessionId), eq(session.userId, userId)))
+      .returning({ id: session.id });
 
-    if (!targetSession) {
+    if (!deleted) {
       res.status(404).json({ error: "Sesi tidak ditemukan" });
       return;
     }
 
-    await db.delete(session).where(eq(session.id, sessionId));
     res.json({ message: "Sesi berhasil dicabut" });
   } catch (error) {
     console.error("Revoke session error:", error);
@@ -232,26 +234,28 @@ router.delete("/", async (req, res) => {
   try {
     const userId = req.user!.id;
 
-    // 1. Delete all activity logs created by this user
-    await db.delete(activityLog).where(eq(activityLog.createdById, userId));
+    await db.transaction(async (tx) => {
+      // 1. Delete all activity logs created by this user
+      await tx.delete(activityLog).where(eq(activityLog.createdById, userId));
 
-    // 2. Delete all outgoing transactions created by this user (items cascade automatically)
-    await db.delete(outgoingTransaction).where(eq(outgoingTransaction.createdById, userId));
+      // 2. Delete all outgoing transactions created by this user (items cascade automatically)
+      await tx.delete(outgoingTransaction).where(eq(outgoingTransaction.createdById, userId));
 
-    // 3. Delete all transfers created by this user
-    await db.delete(transfer).where(eq(transfer.createdById, userId));
+      // 3. Delete all transfers created by this user
+      await tx.delete(transfer).where(eq(transfer.createdById, userId));
 
-    // 4. Delete all items created by this user
-    await db.delete(item).where(eq(item.createdById, userId));
+      // 4. Delete all items created by this user
+      await tx.delete(item).where(eq(item.createdById, userId));
 
-    // 5. Delete Better Auth sessions
-    await db.delete(session).where(eq(session.userId, userId));
+      // 5. Delete Better Auth sessions
+      await tx.delete(session).where(eq(session.userId, userId));
 
-    // 6. Delete Better Auth accounts (OAuth providers)
-    await db.delete(account).where(eq(account.userId, userId));
+      // 6. Delete Better Auth accounts (OAuth providers)
+      await tx.delete(account).where(eq(account.userId, userId));
 
-    // 7. Delete the user record itself
-    await db.delete(user).where(eq(user.id, userId));
+      // 7. Delete the user record itself
+      await tx.delete(user).where(eq(user.id, userId));
+    });
 
     res.json({ message: "Akun dan semua data berhasil dihapus" });
   } catch (error) {

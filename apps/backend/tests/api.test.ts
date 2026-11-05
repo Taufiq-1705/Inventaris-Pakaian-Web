@@ -78,7 +78,7 @@ const h = vi.hoisted(() => {
   return state;
 });
 
-vi.mock("../src/db/index.js", () => ({ db: h.db, migrationClient: {} }));
+vi.mock("../src/db/index.js", () => ({ db: h.db }));
 
 vi.mock("../src/lib/auth.js", () => ({
   auth: {
@@ -159,7 +159,7 @@ describe("requireAuth (middleware asli)", () => {
   it("getSession melempar error -> 401 'sesi tidak valid'", async () => {
     h.getSession.mockRejectedValueOnce(new Error("invalid signature"));
 
-    const res = await request(app).get("/api/outgoing/next-code");
+    const res = await request(app).get("/api/outgoing/history");
 
     expect(res.status).toBe(401);
     expect(res.body.error).toBe("Unauthorized — sesi tidak valid");
@@ -189,6 +189,7 @@ describe("POST /api/outgoing (controller + service asli)", () => {
     ["items kosong", { items: [] }, "Daftar barang tidak boleh kosong"],
     ["quantity 0", { items: [{ itemId: 1, quantity: 0 }] }, "ID barang dan jumlah yang valid wajib diisi"],
     ["quantity negatif", { items: [{ itemId: 1, quantity: -5 }] }, "ID barang dan jumlah yang valid wajib diisi"],
+    ["quantity string", { items: [{ itemId: 1, quantity: "sepuluh_pcs_invalid" }] }, "ID barang dan jumlah yang valid wajib diisi"],
     ["itemId hilang", { items: [{ quantity: 5 }] }, "ID barang dan jumlah yang valid wajib diisi"],
   ])("%s -> 400 Bad Request, transaksi tidak dibuka", async (_label, body, message) => {
     const res = await request(app).post("/api/outgoing").send(body);
@@ -248,27 +249,12 @@ describe("POST /api/outgoing (controller + service asli)", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-describe("GET /api/outgoing/next-code", () => {
-  it.each([
-    ["kode terakhir KB-00056", [{ transactionCode: "KB-00056" }], "KB-00057"],
-    ["belum ada transaksi", [], "KB-00001"],
-    ["kode terakhir tidak sesuai pola", [{ transactionCode: "OLD-9" }], "KB-00001"],
-  ])("%s -> %s", async (_label, rows, expected) => {
-    h.selectResults = [rows];
-
+describe("GET /api/outgoing/next-code (dihapus)", () => {
+  it("Endpoint tidak lagi tersedia -> 404; kode final berasal dari POST /api/outgoing", async () => {
     const res = await request(app).get("/api/outgoing/next-code");
 
-    expect(res.status).toBe(200);
-    expect(res.body.code).toBe(expected);
-  });
-
-  it("Query gagal -> 500", async () => {
-    h.selectResults = [new Error("db down")];
-
-    const res = await request(app).get("/api/outgoing/next-code");
-
-    expect(res.status).toBe(500);
-    expect(res.body.error).toBe("Gagal membuat kode transaksi");
+    expect(res.status).toBe(404);
+    expect(h.db.select).not.toHaveBeenCalled();
   });
 });
 
